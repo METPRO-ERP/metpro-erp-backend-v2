@@ -130,21 +130,25 @@ def build_quote_invoice_pdf(
     pdf = FPDF()
 
     # Page 1: cover (portada). A failure here must never block the quote or invoice itself.
+    # 2026-11-03: with PORTADA_NOTE_ENABLED the quote letter carries the note; the bottom "Notas" block is then left out.
+    note_in_cover = False
     try:
         from cover_page.service import get_active_body
         kind = "quote" if doc_type == "COTIZACION" else "invoice"
         cover_body = get_active_body(kind)
         if cover_body:
             from pdf.builder_cover import add_cover_page
-            add_cover_page(
+            note_in_cover = add_cover_page(
                 pdf, kind, cover_body,
                 client_name=(client or {}).get("company_name", ""),
                 contact_name=(client or {}).get("contact_name", ""),
                 user_name=signer_name or "",
                 date_text=doc_date,
                 doc_label=doc_id,
-            )
+                note=notes or "",
+            ) is True
     except Exception:
+        note_in_cover = False
         logger.exception("Cover page failed; continuing without it")
 
     pdf.add_page()
@@ -298,10 +302,10 @@ def build_quote_invoice_pdf(
         pdf.set_draw_color(220, 220, 220)
         pdf.set_font('Arial', 'B', 7)
         pdf.set_text_color(60, 60, 60)
-        desc_w, name_max = (60, 38) if show_units else (85, 50)  # MEDIDAS takes 25 from the description
+        desc_w, name_max = (60, 38) if show_units else (85, 50)  # UNIDAD takes 25 from the description
         pdf.cell(desc_w, 6, 'DESCRIPCIÓN', 1, 0, 'L', True)
         if show_units:
-            pdf.cell(25, 6, 'MEDIDAS', 1, 0, 'C', True)
+            pdf.cell(25, 6, 'UNIDAD', 1, 0, 'C', True)
         pdf.cell(25, 6, 'CANTIDAD', 1, 0, 'C', True)
         pdf.cell(35, 6, 'PRECIO UNIT.', 1, 0, 'R', True)
         pdf.cell(45, 6, 'TOTAL', 1, 1, 'R', True)
@@ -508,7 +512,7 @@ def build_quote_invoice_pdf(
         pdf.ln(8)
 
     # ==================== NOTES SECTION ====================
-    if notes:
+    if notes and not note_in_cover:  # never lost: printed here unless the portada letter already carries it
         pdf.set_font("Arial", "B", 9)
         pdf.set_text_color(30, 30, 30)
         pdf.cell(0, 6, "Notas", 0, 1, "L")

@@ -44,8 +44,14 @@ def _value(pdf, text):
     pdf.cell(0, 6, _text(text), 0, 1)
 
 
-def add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_text, doc_label):
-    """Add the cover as a new page of `pdf`. kind is 'quote' or 'invoice'."""
+def add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_text, doc_label, note=""):
+    """Add the cover as a new page of `pdf`. kind is 'quote' or 'invoice'.
+
+    Returns True when the letter carries the quote's note ({Note} in the text with PORTADA_NOTE_ENABLED on),
+    so the caller leaves the bottom "Notas" block out. False otherwise.
+    """
+    from cover_page.defaults import NOTE_FIELD, portada_note_enabled
+    note_in_letter = kind == "quote" and portada_note_enabled() and ("{" + NOTE_FIELD + "}") in (body or "")
     pdf.add_page()
     pdf.set_left_margin(LEFT)
     pdf.set_right_margin(LEFT)
@@ -96,6 +102,8 @@ def add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_t
         "No_Cotizacion": _text(doc_label) if kind == "quote" else "",
         "No_Factura": _text(doc_label) if kind == "invoice" else "",
     }
+    # Switch off, or an invoice: {Note} prints nothing (and its [[ ]] clause is dropped); the note stays at the bottom.
+    values[NOTE_FIELD] = _text(note).strip() if note_in_letter else ""
     rendered = render_text(_text(body), values)
 
     pdf.set_text_color(40, 40, 40)
@@ -110,10 +118,11 @@ def add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_t
     # Restore the margins the rest of the document expects.
     pdf.set_left_margin(10)
     pdf.set_right_margin(10)
+    return note_in_letter
 
 
-def create_cover_pdf(kind, body, client_name, contact_name, user_name, date_text, doc_label) -> io.BytesIO:
+def create_cover_pdf(kind, body, client_name, contact_name, user_name, date_text, doc_label, note="") -> io.BytesIO:
     """Standalone one-page PDF of the cover (used by the editor preview)."""
     pdf = FPDF()
-    add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_text, doc_label)
+    add_cover_page(pdf, kind, body, client_name, contact_name, user_name, date_text, doc_label, note=note)
     return io.BytesIO(bytes(pdf.output(dest="S")))

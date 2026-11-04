@@ -5,11 +5,14 @@ from typing import Optional
 
 from core.errors import api_error
 from database import get_db_connection
-from cover_page.defaults import DEFAULT_BODY, DOC_TYPES, MAX_BODY_CHARS, allowed_fields
+from cover_page.defaults import DOC_TYPES, MAX_BODY_CHARS, allowed_fields, default_body
 
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
+# [[ ... ]] = optional text: printed only when every {Field} inside it has a value (2026-11-03).
+_OPTIONAL = re.compile(r"\[\[(.*?)\]\]", re.S)
+_END_PUNCT = (".", ":", ";", ",", "!", "?")
 
 
 def _check_doc_type(doc_type: str) -> None:
@@ -34,14 +37,40 @@ def validate_body(doc_type: str, body: Optional[str]) -> str:
     return text
 
 
+def _drop_empty_blocks(body: str, values: dict) -> str:
+    """Keep [[ ... ]] text only when every known field inside it has a value.
+
+    When a dropped block closed its line and the line no longer ends in punctuation, a period closes it:
+    "Adjunta la cotización Q-10001[[ con ...: {Note}]]" with no note prints "Adjunta la cotización Q-10001."
+    """
+    out, pos = [], 0
+    for m in _OPTIONAL.finditer(body):
+        out.append(body[pos:m.start()])
+        inner = m.group(1)
+        fields = _PLACEHOLDER.findall(inner)
+        filled = all(str(values.get(f) or "").strip() for f in fields if f in values)
+        if filled:
+            out.append(inner)
+        else:
+            rest = body[m.end():]
+            closes_line = rest == "" or rest.startswith("\n")
+            before = "".join(out).rstrip(" ")
+            if closes_line and before and not before.endswith(_END_PUNCT) and not before.endswith("\n"):
+                out = [before, "."]
+        pos = m.end()
+    out.append(body[pos:])
+    return "".join(out)
+
+
 def render_text(body: str, values: dict) -> str:
-    """Replace known {Fields}. Anything else is left as written."""
+    """Replace known {Fields}. Optional [[ ... ]] blocks follow their fields. Anything else is left as written."""
+    body = _drop_empty_blocks(body, values)
     return _PLACEHOLDER.sub(lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), body)
 
 
 def _row_to_dict(doc_type: str, row) -> dict:
     if not row:
-        return {"doc_type": doc_type, "body": DEFAULT_BODY[doc_type], "enabled": True, "is_default": True,
+        return {"doc_type": doc_type, "body": default_body(doc_type), "enabled": True, "is_default": True,
                 "updated_at": None, "updated_by": None}
     return {"doc_type": doc_type, "body": row["body"], "enabled": bool(row["enabled"]), "is_default": False,
             "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
@@ -103,4 +132,4 @@ def get_active_body(doc_type: str) -> Optional[str]:
             return row["body"] if row["enabled"] else None
     except Exception:
         logger.exception("Cover page template lookup failed; using built-in text")
-    return DEFAULT_BODY[doc_type]
+    return default_body(doc_type)

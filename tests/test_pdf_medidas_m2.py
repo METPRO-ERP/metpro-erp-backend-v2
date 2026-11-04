@@ -1,4 +1,4 @@
-"""PDF update M2: project heading, MEDIDAS column and the print_items checkbox on quote and invoice PDFs.
+"""PDF update M2: project heading, UNIDAD column (was MEDIDAS) and the print_items checkbox on quote and invoice PDFs.
 
 Old documents (no units, checkbox on, switches off) must render byte-identical to before this change.
 """
@@ -102,18 +102,18 @@ def test_heading_wraps_a_very_long_name(monkeypatch):
 
 def test_medidas_column_prints_only_with_the_switch_and_a_unit(monkeypatch):
     units = [dict(ITEMS[0], unit_of_measure="Ft"), dict(ITEMS[1])]
-    assert "MEDIDAS" not in text(build(items=units))           # switch off
+    assert "UNIDAD" not in text(build(items=units))           # switch off
     monkeypatch.setenv("PDF_MEDIDAS_ENABLED", "true")
     t = text(build(items=units))
-    assert "MEDIDAS" in t and "(Ft)" in t
-    assert "MEDIDAS" not in text(build(items=[dict(i) for i in ITEMS]))  # no line has a unit
-    assert "MEDIDAS" not in text(build(items=[dict(i, unit_of_measure="  ") for i in ITEMS]))
+    assert "UNIDAD" in t and "(Ft)" in t
+    assert "UNIDAD" not in text(build(items=[dict(i) for i in ITEMS]))  # no line has a unit
+    assert "UNIDAD" not in text(build(items=[dict(i, unit_of_measure="  ") for i in ITEMS]))
 
 
 def test_hidden_lines_do_not_decide_the_column(monkeypatch):
     monkeypatch.setenv("PDF_MEDIDAS_ENABLED", "true")
     items = [dict(ITEMS[0], print_on_pdf=False, unit_of_measure="Ft"), dict(ITEMS[1])]
-    assert "MEDIDAS" not in text(build(items=items))
+    assert "UNIDAD" not in text(build(items=items))
 
 
 def test_print_items_false_removes_the_table_but_keeps_heading_and_totals(monkeypatch):
@@ -214,7 +214,7 @@ def test_every_quote_and_invoice_route_follows_the_checkbox(db, print_items):
         t = text(resp.content)
         assert "Torre Norte" in t and "Resumen Financiero" in t
         assert ("Viga unica" in t) is print_items
-        assert ("MEDIDAS" in t) is print_items
+        assert ("UNIDAD" in t) is print_items
 
     check(client.get(f"/quotes/{qid}/pdf", headers=_hdr()))
     check(client.get(f"/pdf/quotes/{qid}", headers=_hdr()))

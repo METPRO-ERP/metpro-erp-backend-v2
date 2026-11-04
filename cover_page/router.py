@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from auth.service import require_role
 from cover_page import service
-from cover_page.defaults import DEFAULT_BODY, allowed_fields
+from cover_page.defaults import allowed_fields, default_bodies, default_body
 from pdf.builder_cover import create_cover_pdf
 from pdf.utils.signer import resolve_signer_name
 
@@ -28,7 +28,7 @@ def list_templates(_admin: dict = Depends(require_role("admin"))):
     return {
         "templates": service.get_all_templates(),
         "fields": {t: list(allowed_fields(t)) for t in ("quote", "invoice")},
-        "defaults": DEFAULT_BODY,
+        "defaults": default_bodies(),
     }
 
 
@@ -40,7 +40,8 @@ def save_template(doc_type: str, payload: CoverSave, admin: dict = Depends(requi
 @router.post("/{doc_type}/preview")
 def preview(doc_type: str, payload: CoverPreview, admin: dict = Depends(require_role("admin"))):
     """One-page PDF of the cover with sample data. Uses the posted text, so unsaved edits can be previewed."""
-    body = service.validate_body(doc_type, payload.body if payload.body is not None else DEFAULT_BODY.get(doc_type, ""))
+    service.validate_body(doc_type, "x")  # 404 for an unknown type before default_body is read
+    body = service.validate_body(doc_type, payload.body if payload.body is not None else default_body(doc_type))
     kind = doc_type
     stream = create_cover_pdf(
         kind=kind,
@@ -50,6 +51,7 @@ def preview(doc_type: str, payload: CoverPreview, admin: dict = Depends(require_
         user_name=resolve_signer_name(admin) or "Representante Metpro",
         date_text="2026-10-17",
         doc_label="Q-10001" if kind == "quote" else "F-10001",
+        note="Nave industrial de 18 x 45 m con techo de aluzinc calibre 26." if kind == "quote" else "",
     )
     return StreamingResponse(
         stream,

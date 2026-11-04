@@ -149,3 +149,95 @@ def test_cover_routes_require_admin():
     for r in router.routes:
         deps = " ".join(repr(d.call) for d in r.dependant.dependencies)
         assert "require_role" in deps or "dependency" in deps
+
+
+# ---------------- 2026-11-03: quote note inside the portada letter (PORTADA_NOTE_ENABLED) ----------------
+
+def _pdf_text(pdf_bytes: bytes) -> str:
+    import subprocess
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(pdf_bytes)
+        f.flush()
+        return subprocess.run(["pdftotext", "-layout", f.name, "-"], capture_output=True, text=True).stdout
+
+
+def _norm(t: str) -> str:
+    return " ".join(t.split())
+
+
+def test_note_field_and_default_follow_the_switch(monkeypatch):
+    from cover_page.defaults import allowed_fields, default_body
+    monkeypatch.delenv("PORTADA_NOTE_ENABLED", raising=False)
+    assert "Note" not in allowed_fields("quote") and default_body("quote") == DEFAULT_BODY["quote"]
+    monkeypatch.setenv("PORTADA_NOTE_ENABLED", "on")
+    assert "Note" in allowed_fields("quote") and "Note" not in allowed_fields("invoice")
+    body = default_body("quote")
+    assert "Adjunta la cotización {No_Cotizacion}[[ con las siguientes especificaciones: {Note}]]" in body
+    assert service.validate_body("quote", body) == body
+    assert default_body("invoice") == DEFAULT_BODY["invoice"]
+
+
+def test_optional_block_prints_only_with_a_value():
+    line = "Adjunta la cotización {No_Cotizacion}[[ con las siguientes especificaciones: {Note}]]\n\nFin"
+    full = service.render_text(line, {"No_Cotizacion": "Q-10001", "Note": "Techo de aluzinc"})
+    assert full.startswith("Adjunta la cotización Q-10001 con las siguientes especificaciones: Techo de aluzinc\n")
+    empty = service.render_text(line, {"No_Cotizacion": "Q-10001", "Note": "  "})
+    assert empty.startswith("Adjunta la cotización Q-10001.\n") and "especificaciones" not in empty
+    mid = service.render_text("Hola[[ {Note}]], adiós", {"Note": ""})
+    assert mid == "Hola, adiós"  # a dropped block in the middle of a line adds no period
+
+
+@pytest.fixture
+def note_on(monkeypatch):
+    from cover_page.defaults import default_body
+    monkeypatch.setenv("PORTADA_NOTE_ENABLED", "true")
+    monkeypatch.setattr("cover_page.service.get_active_body", lambda kind: default_body(kind))
+
+
+def test_quote_note_moves_into_the_letter(note_on):
+    t = _norm(_pdf_text(_build("COTIZACION", notes="Incluye anclajes y pintura anticorrosiva.")))
+    assert "con las siguientes especificaciones: Incluye anclajes y pintura anticorrosiva." in t
+    assert "Notas" not in t and t.count("Incluye anclajes") == 1
+
+
+def test_quote_without_note_hides_the_clause(note_on):
+    t = _norm(_pdf_text(_build("COTIZACION", notes="")))
+    assert "Adjunta la cotización Q-10001." in t and "especificaciones" not in t
+
+
+def test_note_never_lost_when_portada_is_off_or_template_has_no_note(monkeypatch):
+    monkeypatch.setenv("PORTADA_NOTE_ENABLED", "true")
+    monkeypatch.setattr("cover_page.service.get_active_body", lambda kind: None)  # portada switched off
+    assert "Notas" in _norm(_pdf_text(_build("COTIZACION", notes="Nota X")))
+    monkeypatch.setattr("cover_page.service.get_active_body", lambda kind: DEFAULT_BODY[kind])  # old text, no {Note}
+    t = _norm(_pdf_text(_build("COTIZACION", notes="Nota X")))
+    assert "Notas" in t and "Nota X" in t
+
+
+def test_switch_off_keeps_todays_layout_even_with_a_note_template(monkeypatch):
+    from cover_page.defaults import QUOTE_BODY_WITH_NOTE
+    monkeypatch.delenv("PORTADA_NOTE_ENABLED", raising=False)
+    monkeypatch.setattr("cover_page.service.get_active_body", lambda kind: QUOTE_BODY_WITH_NOTE)
+    t = _norm(_pdf_text(_build("COTIZACION", notes="Nota Y")))
+    assert "Notas" in t and "{Note}" not in t and "especificaciones" not in t
+    assert "Adjunta la cotización Q-10001." in t
+
+
+def test_invoice_keeps_its_bottom_notes(note_on):
+    t = _norm(_pdf_text(_build("FACTURA", doc_id="F-10001", notes="Pago a 30 días")))
+    assert "Notas" in t and "Pago a 30 días" in t
+
+
+def test_preview_route_uses_the_note_default(monkeypatch):
+    from fastapi.testclient import TestClient
+    from auth.service import create_access_token
+    import auth.service as auth_service
+    from main import app
+    monkeypatch.setenv("PORTADA_NOTE_ENABLED", "true")
+    monkeypatch.setattr(auth_service, "_assert_user_active", lambda u: None)
+    hdr = {"Authorization": "Bearer " + create_access_token({"sub": "a", "role": "admin", "user_id": "00000000-0000-0000-0000-000000000009"})}
+    r = TestClient(app).post("/cover-page/quote/preview", json={}, headers=hdr)
+    assert r.status_code == 200
+    t = _norm(_pdf_text(r.content))
+    assert "con las siguientes especificaciones: Nave industrial de 18 x 45 m" in t
