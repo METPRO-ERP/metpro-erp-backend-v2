@@ -55,7 +55,17 @@ def test_on_with_unidad_column(monkeypatch):
     items = long_items()
     items[0]["unit_of_measure"] = "m2"
     out = visible(m2.build(items=items))
-    assert "FIN" in out and "m2" in out and "UNIDAD" in out
+    assert "FIN" in out and "m2" in out
+    for h in ("UND.", "CANT.", "P.U.", "TOTAL"):
+        assert h in out
+    assert "PRECIO UNIT." not in out and "CANTIDAD" not in out
+
+
+def test_on_compact_columns_fit_large_amounts(monkeypatch):
+    monkeypatch.setenv("PDF_DESC_WRAP_ENABLED", "true")
+    items = [{"product_name": "Nave", "quantity": 12500, "unit_price": 1234567.89}]
+    out = visible(m2.build(items=items))
+    assert "$1,234,567.89" in out and "$15,432,098,625.00" in out
 
 
 def test_on_short_rows_keep_one_line(monkeypatch):

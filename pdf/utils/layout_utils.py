@@ -97,6 +97,9 @@ from core import pdf_options  # noqa: E402
 
 LINE_H = 5  # one text line in an item row (mm)
 WRAP_H, WRAP_PAD = 3.6, 1.4  # wrapped description: line height and top+bottom padding (mm)
+# (width mm, header) for Unidad, Cantidad, Precio unit., Total
+CLASSIC_COLS = ((25, 'UNIDAD'), (25, 'CANTIDAD'), (35, 'PRECIO UNIT.'), (45, 'TOTAL'))
+COMPACT_COLS = ((14, 'UND.'), (17, 'CANT.'), (26, 'P.U.'), (30, 'TOTAL'))
 
 
 def item_row(pdf, desc_w, desc, cells, fill=True):
@@ -331,13 +334,19 @@ def build_quote_invoice_pdf(
         pdf.set_draw_color(220, 220, 220)
         pdf.set_font('Arial', 'B', 7)
         pdf.set_text_color(60, 60, 60)
-        desc_w, name_max = (60, 38) if show_units else (85, 50)  # UNIDAD takes 25 from the description
+        if pdf_options.desc_wrap_enabled():
+            # Compact number columns; the description gets the rest of the 190 mm
+            (unit_w, unit_h), (qty_w, qty_h), (pu_w, pu_h), (tot_w, tot_h) = COMPACT_COLS
+        else:
+            (unit_w, unit_h), (qty_w, qty_h), (pu_w, pu_h), (tot_w, tot_h) = CLASSIC_COLS
+        desc_w = 190 - qty_w - pu_w - tot_w - (unit_w if show_units else 0)
+        name_max = 38 if show_units else 50  # only used with the switch off
         pdf.cell(desc_w, 6, 'DESCRIPCIÓN', 1, 0, 'L', True)
         if show_units:
-            pdf.cell(25, 6, 'UNIDAD', 1, 0, 'C', True)
-        pdf.cell(25, 6, 'CANTIDAD', 1, 0, 'C', True)
-        pdf.cell(35, 6, 'PRECIO UNIT.', 1, 0, 'R', True)
-        pdf.cell(45, 6, 'TOTAL', 1, 1, 'R', True)
+            pdf.cell(unit_w, 6, unit_h, 1, 0, 'C', True)
+        pdf.cell(qty_w, 6, qty_h, 1, 0, 'C', True)
+        pdf.cell(pu_w, 6, pu_h, 1, 0, 'R', True)
+        pdf.cell(tot_w, 6, tot_h, 1, 1, 'R', True)
 
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
@@ -360,8 +369,8 @@ def build_quote_invoice_pdf(
 
             cells = []
             if show_units:
-                cells.append((25, sanitize_text(pdf_options.clean_unit(item.get('unit_of_measure')) or ''), 'C'))
-            cells += [(25, f'{qty:.2f}', 'C'), (35, f'${price:,.2f}', 'R'), (45, f'${subtotal:,.2f}', 'R')]
+                cells.append((unit_w, sanitize_text(pdf_options.clean_unit(item.get('unit_of_measure')) or ''), 'C'))
+            cells += [(qty_w, f'{qty:.2f}', 'C'), (pu_w, f'${price:,.2f}', 'R'), (tot_w, f'${subtotal:,.2f}', 'R')]
             item_row(pdf, desc_w, product_name, cells)
 
             row_color = not row_color

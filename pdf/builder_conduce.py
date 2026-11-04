@@ -124,8 +124,9 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
     pdf.set_draw_color(220, 220, 220)
     pdf.set_font('Arial', 'B', 7)
     pdf.set_text_color(60, 60, 60)
-    pdf.cell(140, 6, 'DESCRIPCIÓN', 1, 0, 'L', True)
-    pdf.cell(50, 6, 'CANTIDAD', 1, 1, 'C', True)
+    desc_w, qty_w, qty_h = (170, 20, 'CANT.') if pdf_options.desc_wrap_enabled() else (140, 50, 'CANTIDAD')
+    pdf.cell(desc_w, 6, 'DESCRIPCIÓN', 1, 0, 'L', True)
+    pdf.cell(qty_w, 6, qty_h, 1, 1, 'C', True)
 
     # Table rows
     pdf.set_font('Arial', '', 7)
@@ -145,7 +146,7 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
         else:
             pdf.set_fill_color(255, 255, 255)
 
-        item_row(pdf, 140, product_name, [(50, f'{qty:.2f}', 'C')])
+        item_row(pdf, desc_w, product_name, [(qty_w, f'{qty:.2f}', 'C')])
 
         row_color = not row_color
 
