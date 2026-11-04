@@ -31,6 +31,11 @@ def project_desc_enabled() -> bool:
     return _on("PDF_PROJECT_DESC_ENABLED")
 
 
+def desc_wrap_enabled() -> bool:
+    """Item descriptions wrap onto extra lines instead of being cut (quote, invoice, conduce)."""
+    return _on("PDF_DESC_WRAP_ENABLED")
+
+
 def clean_unit(value) -> Optional[str]:
     """Free text. Blank = no unit. Trimmed and capped; no fixed list."""
     if value is None:

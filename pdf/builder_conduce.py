@@ -7,7 +7,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from pdf.utils.layout_utils import add_footer_with_signature, _category_heading
+from pdf.utils.layout_utils import add_footer_with_signature, _category_heading, item_row
+from core import pdf_options
 
 
 # ==================== ABSOLUTE LOGO PATH (FIXED) ====================
@@ -135,15 +136,16 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
     for item in items:
         current_category = _category_heading(pdf, item, current_category, 190)
         qty = float(item['quantity'] or 0)
-        product_name = sanitize_text(item.get('product_name', 'Item'))[:80]
+        product_name = sanitize_text(item.get('product_name', 'Item'))
+        if not pdf_options.desc_wrap_enabled():
+            product_name = product_name[:80]
 
         if row_color:
             pdf.set_fill_color(252, 252, 252)
         else:
             pdf.set_fill_color(255, 255, 255)
 
-        pdf.cell(140, 5, product_name, 1, 0, 'L', True)
-        pdf.cell(50, 5, f'{qty:.2f}', 1, 1, 'C', True)
+        item_row(pdf, 140, product_name, [(50, f'{qty:.2f}', 'C')])
 
         row_color = not row_color
 

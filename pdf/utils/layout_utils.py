@@ -95,6 +95,35 @@ def _category_heading(pdf, item, current, width):
 from core.visibility import customer_items  # noqa: E402  (A3)
 from core import pdf_options  # noqa: E402
 
+LINE_H = 5  # one text line in an item row (mm)
+WRAP_H, WRAP_PAD = 3.6, 1.4  # wrapped description: line height and top+bottom padding (mm)
+
+
+def item_row(pdf, desc_w, desc, cells, fill=True):
+    """
+    One item row. With PDF_DESC_WRAP_ENABLED on, the description wraps onto as many lines as it
+    needs and every cell in the row grows to the same height. The row never splits across pages:
+    if it does not fit, a new page starts first. With the switch off, the old single-line row prints.
+    cells: list of (width, text, align) for the columns after the description.
+    """
+    if not pdf_options.desc_wrap_enabled():
+        pdf.cell(desc_w, LINE_H, desc, 1, 0, 'L', fill)
+        for i, (w, text, align) in enumerate(cells):
+            pdf.cell(w, LINE_H, text, 1, 1 if i == len(cells) - 1 else 0, align, fill)
+        return
+    lines = pdf.multi_cell(desc_w, WRAP_H, desc, 0, 'L', dry_run=True, output='LINES') or ['']
+    h = WRAP_H * len(lines) + WRAP_PAD  # one line = 5 mm, same as before
+    if pdf.get_y() + h > pdf.page_break_trigger:
+        pdf.add_page()
+    x, y = pdf.get_x(), pdf.get_y()
+    pdf.rect(x, y, desc_w, h, 'DF' if fill else 'D')
+    pdf.set_xy(x, y + WRAP_PAD / 2)
+    pdf.multi_cell(desc_w, WRAP_H, desc, 0, 'L', False)
+    pdf.set_xy(x + desc_w, y)
+    for i, (w, text, align) in enumerate(cells):
+        pdf.cell(w, h, text, 1, 1 if i == len(cells) - 1 else 0, align, fill)
+    pdf.set_x(x)
+
 
 def build_quote_invoice_pdf(
     doc_type, doc_id, doc_date, client, project_name, notes, items,
@@ -320,19 +349,20 @@ def build_quote_invoice_pdf(
             qty = float(item.get('quantity') or 0)
             price = float(item.get('unit_price') or 0)
             subtotal = qty * price
-            product_name = sanitize_text(item.get('product_name', 'Item'))[:name_max]
+            product_name = sanitize_text(item.get('product_name', 'Item'))
+            if not pdf_options.desc_wrap_enabled():
+                product_name = product_name[:name_max]
 
             if row_color:
                 pdf.set_fill_color(252, 252, 252)
             else:
                 pdf.set_fill_color(255, 255, 255)
 
-            pdf.cell(desc_w, 5, product_name, 1, 0, 'L', True)
+            cells = []
             if show_units:
-                pdf.cell(25, 5, sanitize_text(pdf_options.clean_unit(item.get('unit_of_measure')) or ''), 1, 0, 'C', True)
-            pdf.cell(25, 5, f'{qty:.2f}', 1, 0, 'C', True)
-            pdf.cell(35, 5, f'${price:,.2f}', 1, 0, 'R', True)
-            pdf.cell(45, 5, f'${subtotal:,.2f}', 1, 1, 'R', True)
+                cells.append((25, sanitize_text(pdf_options.clean_unit(item.get('unit_of_measure')) or ''), 'C'))
+            cells += [(25, f'{qty:.2f}', 'C'), (35, f'${price:,.2f}', 'R'), (45, f'${subtotal:,.2f}', 'R')]
+            item_row(pdf, desc_w, product_name, cells)
 
             row_color = not row_color
 
