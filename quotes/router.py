@@ -416,12 +416,24 @@ def duplicate_quote(quote_id: str, body: Optional[DuplicateQuoteIn] = None, curr
     )
 
 
+class ConvertIn(BaseModel):
+    billing_mode: Optional[str] = None   # FULL (default) or PHASED (switch PHASED_INVOICING_ENABLED)
+
+
 @router.post("/{quote_id}/convert-to-invoice")
-def convert_to_invoice(quote_id: str, current_user: dict = Depends(require_auth)):
-    """Convert approved quote to invoice"""
+def convert_to_invoice(quote_id: str, body: Optional[ConvertIn] = None, current_user: dict = Depends(require_auth)):
+    """Convert approved quote to invoice. PHASED only marks the quote; each phase is invoiced from /phases/{id}/invoice."""
     enforce_admin(current_user)
-    invoice = service.convert_quote_to_invoice(quote_id, current_user.get("user_id"))
-    return {
+    invoice = service.convert_quote_to_invoice(quote_id, current_user.get("user_id"),
+                                               billing_mode=body.billing_mode if body else None)
+    if invoice.get("id") is None:   # PHASED mode set, no invoice yet
+        return {"quote_id": invoice["quote_id"], "billing_mode": "PHASED", "message": f"Cotización {quote_id} en modo de facturación por fases"}
+    extra = {}
+    if invoice.get("ncf"):
+        extra["ncf"] = invoice["ncf"]
+    if invoice.get("ncf_warning"):
+        extra["ncf_warning"] = invoice["ncf_warning"]
+    return {**extra,
         "invoice_id": invoice["id"],
         "invoice_number": invoice["invoice_number"],
         "quote_id": invoice["quote_id"],

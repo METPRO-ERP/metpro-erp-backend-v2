@@ -1,4 +1,5 @@
 from core.errors import api_error
+from core.billing_errors import billing_error
 from typing import List, Optional
 from fastapi import HTTPException
 from datetime import datetime
@@ -112,6 +113,40 @@ def _invoice_lines(cursor, invoice: dict):
     return [], "none"
 
 
+def ncf_pdf_kwargs(invoice: dict) -> dict:
+    """NCF and batch expiry for any invoice PDF. Empty (the old output, byte for byte) unless FISCAL_NCF_ENABLED
+    is on and this invoice holds an NCF."""
+    from core.fiscal_ncf import fiscal_ncf_enabled
+    if not fiscal_ncf_enabled() or not invoice.get("ncf"):
+        return {}
+    expiry = None
+    if invoice.get("fiscal_sequence_id"):
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT expiry_date FROM fiscal_sequences WHERE id = %s", (invoice["fiscal_sequence_id"],))
+            row = cursor.fetchone()
+            expiry = row["expiry_date"] if row else None
+        finally:
+            conn.close()
+    return {"ncf": invoice["ncf"], "ncf_valid_until": expiry}
+
+
+def _stored_phase_totals(invoice: dict, items: list, rate) -> dict:
+    """Totals of a phase invoice read from the stored columns. No charges, no discounts, no recomputation."""
+    base = round(float(invoice.get("subtotal") or 0), 2)
+    return {
+        "items_total": base, "total_discounts": 0.0, "items_after_discount": base,
+        "supervision": 0.0, "admin": 0.0, "insurance": 0.0, "transport": 0.0, "contingency": 0.0,
+        "subtotal_general": base,
+        "itbis": round(float(invoice.get("itbis_total") or 0), 2),
+        "grand_total": round(float(invoice.get("total_amount") or 0), 2),
+        "tax_label": invoice.get("tax_label"),
+        "tax_rate": None if rate is None else float(rate),
+        "lines_source": "phase_stored",
+    }
+
+
 def invoice_lines_and_totals(invoice: dict, charges: dict):
     """
     (items, totals) for any invoice PDF: download, email, public link, conduce.
@@ -127,6 +162,9 @@ def invoice_lines_and_totals(invoice: dict, charges: dict):
         conn.close()
 
     rate = invoice.get("tax_rate")
+    if invoice.get("phase_id"):
+        # Phase invoice: the ITBIS and total are STORED (pro-rata, plan 3.4). Never recomputed from the one summary line.
+        return items, _stored_phase_totals(invoice, items, rate)
     totals = calculate_invoice_totals(items, charges or {}, None if rate is None else float(rate))
     totals["tax_label"] = invoice.get("tax_label")  # A1: printed as stored
     totals["tax_rate"] = None if rate is None else float(rate)
@@ -368,6 +406,20 @@ def _release_quote_if_no_active_invoice(cursor, quote_id, actor_user_id=None) ->
     return released
 
 
+def _reopen_phased_quote(cursor, quote_id, actor_user_id=None) -> bool:
+    """A cancelled phase invoice leaves part of the quote uninvoiced: Invoiced -> Approved (phased quotes only)."""
+    cursor.execute(
+        "UPDATE quotes SET status = 'Approved', updated_at = CURRENT_TIMESTAMP "
+        "WHERE quote_id = %s AND status = 'Invoiced' AND billing_mode = 'PHASED'",
+        (quote_id,),
+    )
+    reopened = cursor.rowcount > 0
+    if reopened:
+        status_history.record(cursor, status_history.QUOTE, quote_id, "Invoiced", "Approved", actor_user_id,
+                              note="phase invoice cancelled")
+    return reopened
+
+
 def update_invoice_status(invoice_id: int, status: str, actor_user_id: Optional[str] = None) -> dict:
     conn = None
     try:
@@ -378,7 +430,8 @@ def update_invoice_status(invoice_id: int, status: str, actor_user_id: Optional[
             raise api_error(400, f"Estado no válido. Debe ser uno de: {list(INVOICE_STATUSES)}", "INVOICE_STATUS_INVALID")
 
         cursor.execute(
-            "SELECT id, quote_id, status, COALESCE(amount_paid, 0) AS amount_paid FROM invoices WHERE id = %s FOR UPDATE",
+            "SELECT id, quote_id, status, COALESCE(amount_paid, 0) AS amount_paid, to_jsonb(invoices)->>'phase_id' AS phase_id "
+            "FROM invoices WHERE id = %s FOR UPDATE",
             (invoice_id,),
         )
         current = cursor.fetchone()
@@ -402,6 +455,8 @@ def update_invoice_status(invoice_id: int, status: str, actor_user_id: Optional[
             if status == "Cancelled":
                 # B-06: the quote returns to Approved so it can be invoiced again.
                 _release_quote_if_no_active_invoice(cursor, current["quote_id"], actor_user_id)
+                if current.get("phase_id"):
+                    _reopen_phased_quote(cursor, current["quote_id"], actor_user_id)
             conn.commit()
 
         return get_invoice_by_id(invoice_id)
@@ -434,6 +489,12 @@ def delete_invoice(invoice_id: int, actor_user_id: Optional[str] = None) -> dict
         invoice = cursor.fetchone()
         if not invoice:
             raise api_error(404, "Factura no encontrada", "INVOICE_NOT_FOUND")
+
+        # A delete would erase the record of a consumed number: cancel instead (plan 2.3). Any invoice holding
+        # an NCF is blocked, whatever the switch says now.
+        cursor.execute("SELECT to_jsonb(invoices)->>'ncf' AS ncf FROM invoices WHERE id = %s", (invoice_id,))
+        if (cursor.fetchone() or {}).get("ncf"):
+            raise billing_error("INVOICE_HAS_NCF")
 
         cursor.execute("SELECT COUNT(*) AS n FROM invoice_payments WHERE invoice_id = %s", (invoice_id,))
         if cursor.fetchone()["n"] > 0:
@@ -500,6 +561,11 @@ def get_invoice_with_contact(invoice_id: int) -> dict:
                 i.tax_type_code,
                 i.tax_rate,
                 i.tax_label,
+                to_jsonb(i)->>'ncf' AS ncf,
+                (to_jsonb(i)->>'fiscal_sequence_id')::int AS fiscal_sequence_id,
+                (to_jsonb(i)->>'phase_id')::int AS phase_id,
+                i.subtotal AS _subtotal,
+                i.itbis_total AS _itbis_total,
                 COALESCE((to_jsonb(i)->>'print_items')::boolean, true) AS print_items,
                 -- Same source as the internal invoice PDF (pdf/service.py): the quote, then the invoice.
                 q.project_name,
@@ -526,6 +592,13 @@ def get_invoice_with_contact(invoice_id: int) -> dict:
             raise api_error(404, "Factura no encontrada", "INVOICE_NOT_FOUND")
 
         invoice = dict(row)
+        # Fiscal and phase fields travel only when set, so a document without them has the same keys as before.
+        sub, itb = invoice.pop("_subtotal"), invoice.pop("_itbis_total")
+        if invoice.get("phase_id") is not None:
+            invoice["subtotal"], invoice["itbis_total"] = sub, itb
+        for key in ("ncf", "fiscal_sequence_id", "phase_id"):
+            if invoice.get(key) is None:
+                invoice.pop(key, None)
 
         cursor.execute("SELECT * FROM quote_items WHERE quote_id = %s ORDER BY id", (invoice["quote_id"],))
         invoice["items"] = [dict(r) for r in cursor.fetchall()]
@@ -539,6 +612,8 @@ def get_invoice_with_contact(invoice_id: int) -> dict:
             invoice["included_charges"] = raw_charges or {}
         else:
             invoice["included_charges"] = {}
+        if invoice.get("phase_id") is not None:
+            invoice["included_charges"] = {}   # a phase invoice carries no quote charges
 
         return invoice
 

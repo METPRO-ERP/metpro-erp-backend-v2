@@ -143,7 +143,9 @@ def build_quote_invoice_pdf(
     seal=None,
     tax_label=None,
     print_items=True,
-    full_copy=False
+    full_copy=False,
+    ncf=None,
+    ncf_valid_until=None
 ):
     payments = payments or []
     amount_paid = amount_paid or 0
@@ -201,7 +203,16 @@ def build_quote_invoice_pdf(
 
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(30, 30, 30)
-    pdf.cell(0, 7, doc_type, 0, 1, 'R')
+    # FISCAL_NCF_ENABLED: an invoice with an NCF prints the fiscal title, the NCF and the batch expiry here.
+    # Nothing else moves. With no ncf (switch off, or an invoice from before activation) this is the old output.
+    pdf.cell(0, 7, 'Factura de Crédito Fiscal' if ncf else doc_type, 0, 1, 'R')
+    if ncf:
+        pdf.set_font('Arial', 'B', 8)
+        pdf.cell(0, 4, sanitize_text('NCF: ' + str(ncf)), 0, 1, 'R')
+        if ncf_valid_until:
+            pdf.set_font('Arial', '', 7)
+            pdf.cell(0, 4, sanitize_text('Válido hasta: ' + fmt_day(ncf_valid_until)), 0, 1, 'R')
+        pdf.ln(1)
     pdf.set_draw_color(220, 220, 220)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(6)

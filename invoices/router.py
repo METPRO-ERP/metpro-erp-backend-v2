@@ -142,6 +142,7 @@ def send_invoice(
         amount_due=round(float(totals["grand_total"]) - sum(float(pm.get("amount") or 0) for pm in payments), 2),
         payments=payments,  # ✅ now the PDF has the full payment history
         seal=seal,
+        **service.ncf_pdf_kwargs(invoice),
     )
 
     pdf_bytes = pdf_stream.read()
@@ -382,6 +383,7 @@ def _render_public_invoice_pdf(invoice_id: int) -> Response:
         amount_paid=sum(float(pm.get("amount") or 0) for pm in payments),
         amount_due=round(float(totals["grand_total"]) - sum(float(pm.get("amount") or 0) for pm in payments), 2),
         payments=payments,
+        **service.ncf_pdf_kwargs(invoice),
     )
 
     pdf_bytes = pdf_stream.read()

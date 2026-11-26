@@ -9,7 +9,7 @@ from datetime import datetime
 from pdf.utils.date_utils import format_date
 from core.dates import local_date
 from pdf.builder_quote import create_quote_pdf
-from invoices.service import invoice_lines_and_totals
+from invoices.service import invoice_lines_and_totals, ncf_pdf_kwargs
 from quotes.dynamic_charges import dynamic_charges_total
 from pdf.builder_invoice import create_invoice_pdf
 from pdf.builder_conduce import create_conduce_pdf
@@ -256,6 +256,9 @@ def generate_invoice_pdf(invoice_id: int, current_user: dict = None, print_seal:
         )
         payments = [dict(row) for row in cursor.fetchall()]
 
+        if invoice.get('phase_id'):
+            charges = {}  # phase invoice: one summary line, stored ITBIS, no quote charges (plan 3.4)
+
         # F2: lines from invoice_items; grand total = billed invoices.total_amount.
         items, t = invoice_lines_and_totals(dict(invoice), charges)
         grand_total = t['grand_total']
@@ -320,6 +323,7 @@ def generate_invoice_pdf(invoice_id: int, current_user: dict = None, print_seal:
             tax_label=t.get('tax_label'),
             print_items=invoice.get('print_items', True) is not False,
             full_copy=full_copy,
+            **ncf_pdf_kwargs(dict(invoice)),
         )
 
         return StreamingResponse(

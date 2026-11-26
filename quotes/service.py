@@ -2,6 +2,7 @@
 # SECTION 1: IMPORTS
 # =============================================================================
 from core.errors import api_error
+from core.billing_errors import billing_error
 from typing import List, Optional
 from fastapi import HTTPException
 import json
@@ -658,6 +659,12 @@ def update_quote(quote_id: str, quote_update, actor: Optional[dict] = None) -> d
         included_charges = update_dict.pop('included_charges', None)
         # A1: choosing a tax type re-reads it from tax_types and stores the snapshot. Only Draft quotes get here.
         tax_type_code = update_dict.pop('tax_type_code', None)
+        # Phased invoicing (plan 3.2): the quote total cannot change once a phase has an invoice.
+        if (quote.get("billing_mode") == "PHASED"
+                and (items is not None or included_charges is not None or tax_type_code is not None)):
+            cursor.execute("SELECT 1 FROM invoice_phases WHERE quote_id = %s AND invoice_id IS NOT NULL LIMIT 1", (quote_id,))
+            if cursor.fetchone():
+                raise billing_error("QUOTE_TOTAL_LOCKED_PHASED")
         edit_reason = update_dict.pop('edit_reason', None)
         print_items = update_dict.pop('print_items', None)
         _check_print_items(print_items)
@@ -1344,8 +1351,45 @@ def _invoice_line_amounts(item: dict) -> tuple:
     return qty, price, discount, round(gross - discount, 2)
 
 
-def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = None) -> dict:
-    """Convert an approved quote to an invoice."""
+def quote_grand_and_itbis(quote: dict, items: list, charges: dict) -> tuple:
+    """(grand_total, itbis) of a quote as billed: the stored grand_total when present, else recomputed.
+
+    Same arithmetic the FULL conversion uses. Phases split these two numbers (plan v2.1 section 3.4).
+    """
+    breakdown = calculate_quote_totals(items, charges, float(quote["tax_rate"]))
+    grand = float(quote["grand_total"]) if quote.get("grand_total") is not None else breakdown["grand_total"]
+    return grand, round(breakdown["itbis"], 2)
+
+
+def _ncf_precheck() -> None:
+    """First check of the fiscal batch (plan 2.4), before the conversion transaction starts. No lock."""
+    from core import fiscal_ncf
+    from core.dates import business_today
+    conn = get_db_connection()
+    try:
+        fiscal_ncf.precheck(conn.cursor(cursor_factory=RealDictCursor), business_today())
+    finally:
+        conn.close()
+
+
+def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = None,
+                             billing_mode: Optional[str] = None, phase_id: Optional[int] = None) -> dict:
+    """Convert an approved quote to an invoice.
+
+    billing_mode None or FULL: the one invoice of the whole quote (unchanged).
+    billing_mode PHASED (switch PHASED_INVOICING_ENABLED): without phase_id it only marks the quote as
+    phased; with phase_id it creates that phase's invoice through this same function.
+    With FISCAL_NCF_ENABLED on, every invoice created here gets its NCF in this transaction.
+    """
+    from core import fiscal_ncf, phased_invoicing
+    ncf_on = fiscal_ncf.fiscal_ncf_enabled()
+    phased_request = (billing_mode or "FULL").upper() == "PHASED" or phase_id is not None
+    if (billing_mode or "FULL").upper() not in ("FULL", "PHASED"):
+        raise billing_error("BILLING_MODE_INVALID")
+    if phased_request and not phased_invoicing.phased_enabled():
+        raise billing_error("FEATURE_DISABLED")
+    if ncf_on and not (phased_request and phase_id is None):   # marking a quote PHASED issues no invoice, so no number
+        _ncf_precheck()
     conn = None
     try:
         conn = get_db_connection()
@@ -1356,7 +1400,8 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
             SELECT quote_id, quote_number, client_id, contact_id, project_name, notes, status,
                    included_charges, total_amount, grand_total, payment_terms, valid_until,
                    tax_type_code, tax_rate, tax_label,
-                   COALESCE((to_jsonb(quotes)->>'print_items')::boolean, true) AS print_items
+                   COALESCE((to_jsonb(quotes)->>'print_items')::boolean, true) AS print_items,
+                   COALESCE(to_jsonb(quotes)->>'billing_mode', 'FULL') AS billing_mode
             FROM quotes
             WHERE quote_id = %s
             FOR UPDATE
@@ -1369,6 +1414,15 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
 
         if quote["status"] != "Approved":
             raise api_error(400, "Solo las cotizaciones aprobadas se pueden convertir en facturas", "QUOTE_NOT_APPROVED")
+
+        if phased_request:
+            return _convert_phased(conn, cursor, quote, created_by_user_id, phase_id)
+        if quote.get("billing_mode") == "PHASED":
+            # A FULL conversion of a phased quote is allowed only while no phase exists (mode is fixed after that).
+            cursor.execute("SELECT 1 FROM invoice_phases WHERE quote_id = %s LIMIT 1", (quote_id,))
+            if cursor.fetchone():
+                raise billing_error("BILLING_MODE_LOCKED")
+            cursor.execute("UPDATE quotes SET billing_mode = 'FULL' WHERE quote_id = %s", (quote_id,))
 
         # 2. Prevent duplicate invoices. A cancelled invoice does not count (B-06):
         #    the quote can be invoiced again and the cancelled one stays for the record.
@@ -1411,6 +1465,8 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
             invoice_number = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         from core.dates import business_today  # B-04: DR calendar date, not server UTC
         invoice_date = business_today().isoformat()
+        # Fiscal sequence: second check and the assignment, after the quote lock (lock order: quote, then batch).
+        ncf_assigned = fiscal_ncf.assign_ncf(cursor, business_today()) if ncf_on else None
 
         cursor.execute("""
             INSERT INTO invoices
@@ -1447,6 +1503,8 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
         ))
 
         invoice_id = cursor.fetchone()["id"]   # FIXED
+        if ncf_assigned:
+            fiscal_ncf.attach_to_invoice(cursor, invoice_id, ncf_assigned)
 
         # 5. Insert invoice items
         invoice_item_rows = [
@@ -1497,6 +1555,8 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
 
         cursor.execute("SELECT * FROM invoice_items WHERE invoice_id = %s", (invoice_id,))  # FIXED
         new_invoice["items"] = cursor.fetchall()
+        if ncf_assigned and (ncf_assigned["warn_expiry"] or ncf_assigned["warn_exhaustion"]):
+            new_invoice["ncf_warning"] = {"expiry": ncf_assigned["warn_expiry"], "exhaustion": ncf_assigned["warn_exhaustion"]}
 
         return new_invoice
 
@@ -1513,3 +1573,114 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
     finally:
         if conn:
             conn.close()
+
+
+def _convert_phased(conn, cursor, quote: dict, created_by_user_id: Optional[str], phase_id: Optional[int]) -> dict:
+    """PHASED branch of the single conversion path (plan 3.3). The quote row is already locked.
+
+    No phase_id: mark the quote PHASED (only while no non-cancelled invoice exists). Returns the mode.
+    With phase_id: one invoice for that phase. It does not copy quote lines: one line, the phase label,
+    at the phase base. The phase's tax is STORED from the pro-rata calculation made when the phase was
+    created; nothing here or in the PDF recomputes it. Gets its own NCF in this transaction.
+    The quote becomes Invoiced only when the non-cancelled phase invoices add up to the quote total.
+    """
+    from core import fiscal_ncf, phased_invoicing as pi
+    from core.dates import business_today
+    quote_id = quote["quote_id"]
+
+    if phase_id is None:
+        if quote.get("billing_mode") != "PHASED":
+            cursor.execute("SELECT 1 FROM invoices WHERE quote_id = %s AND status <> 'Cancelled' LIMIT 1", (quote_id,))
+            if cursor.fetchone():
+                raise api_error(400, "Ya existe una factura para esta cotización", "INVOICE_EXISTS")
+            cursor.execute("UPDATE quotes SET billing_mode = 'PHASED' WHERE quote_id = %s", (quote_id,))
+        conn.commit()
+        return {"quote_id": quote_id, "billing_mode": "PHASED", "id": None}
+
+    if quote.get("billing_mode") != "PHASED":
+        raise billing_error("BILLING_MODE_NOT_PHASED")
+    cursor.execute("SELECT * FROM invoice_phases WHERE id = %s AND quote_id = %s FOR UPDATE", (phase_id, quote_id))
+    phase = cursor.fetchone()
+    if not phase:
+        raise billing_error("PHASE_NOT_FOUND")
+    if phase["invoice_id"] is not None:
+        raise billing_error("PHASE_ALREADY_INVOICED")
+
+    cursor.execute("SELECT COUNT(*) AS n FROM invoices WHERE quote_id = %s", (quote_id,))
+    previous_invoices = int(cursor.fetchone()["n"])
+    cursor.execute("SELECT * FROM quote_items WHERE quote_id = %s ORDER BY id", (quote_id,))
+    items = [dict(r) for r in cursor.fetchall()]
+    raw_charges = quote.get("included_charges")
+    charges = json.loads(raw_charges) if isinstance(raw_charges, str) else (raw_charges or {})
+    quote_total, _ = quote_grand_and_itbis(quote, items, charges)
+
+    quote_number = quote.get("quote_number")
+    if quote_number:
+        invoice_number = invoice_label(quote_number)
+        if previous_invoices:
+            invoice_number = f"{invoice_number}-{previous_invoices + 1}"
+    else:
+        invoice_number = f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    today = business_today()
+
+    total = pi.money(phase["amount_snapshot"])
+    itbis = pi.money(phase["itbis_snapshot"])   # stored, never recomputed
+    base = total - itbis
+
+    ncf_assigned = fiscal_ncf.assign_ncf(cursor, today)
+    cursor.execute("""
+        INSERT INTO invoices
+            (quote_id, invoice_number, invoice_date, client_id, contact_id,
+             total_amount, status, notes, payment_terms, valid_until, created_by_user_id,
+             subtotal, discount_total, charges_total, itbis_total, grand_total,
+             amount_paid, amount_due, quote_number, tax_type_code, tax_rate, tax_label, phase_id)
+        VALUES (%s, %s, %s, %s, %s, %s, 'Pending', %s, %s, %s, %s, %s, 0, 0, %s, %s, 0, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (
+        quote_id, invoice_number, today.isoformat(), quote["client_id"], quote["contact_id"],
+        total, quote.get("notes"), quote.get("payment_terms"), _serialize_date(quote.get("valid_until")),
+        created_by_user_id, base, itbis, total, total, quote_number,
+        quote["tax_type_code"], quote["tax_rate"], quote["tax_label"], phase_id,
+    ))
+    invoice_id = cursor.fetchone()["id"]
+    fiscal_ncf.attach_to_invoice(cursor, invoice_id, ncf_assigned)
+
+    cursor.execute(
+        "INSERT INTO invoice_items (invoice_id, product_id, description, quantity, unit_price, discount, total, category, line_no, print_on_pdf) "
+        "VALUES (%s, NULL, %s, 1, %s, 0, %s, NULL, 1, true)",
+        (invoice_id, phase["label"], base, base),
+    )
+    cursor.execute("UPDATE invoice_phases SET invoice_id = %s, status = 'Invoiced' WHERE id = %s", (invoice_id, phase_id))
+
+    cursor.execute(
+        "SELECT COALESCE(SUM(p.amount_snapshot), 0) AS invoiced FROM invoice_phases p "
+        "JOIN invoices i ON i.id = p.invoice_id WHERE p.quote_id = %s AND i.status <> 'Cancelled'",
+        (quote_id,),
+    )
+    fully_invoiced = pi.money(cursor.fetchone()["invoiced"]) >= pi.money(quote_total)
+    if fully_invoiced:
+        cursor.execute("UPDATE quotes SET status = 'Invoiced' WHERE quote_id = %s AND status = 'Approved'", (quote_id,))
+        status_history.record(cursor, status_history.QUOTE, quote_id, "Approved", "Invoiced", created_by_user_id,
+                              note="invoice " + str(invoice_number))
+    status_history.record(cursor, status_history.INVOICE, invoice_id, None, "Pending", created_by_user_id,
+                          note="phase " + str(phase["phase_order"]) + " of quote " + str(quote_id))
+
+    cursor.execute("SAVEPOINT project_on_invoice")
+    try:
+        from projects.service import create_project_from_quote
+        create_project_from_quote(cursor, quote_id)
+        cursor.execute("RELEASE SAVEPOINT project_on_invoice")
+    except Exception:
+        cursor.execute("ROLLBACK TO SAVEPOINT project_on_invoice")
+        logger.exception("Project creation failed for phase-invoiced quote %s", quote_id)
+    conn.commit()
+
+    cursor.execute("SELECT i.*, q.payment_terms, q.valid_until FROM invoices i JOIN quotes q ON i.quote_id = q.quote_id WHERE i.id = %s", (invoice_id,))
+    new_invoice = dict(cursor.fetchone())
+    cursor.execute("SELECT * FROM invoice_items WHERE invoice_id = %s", (invoice_id,))
+    new_invoice["items"] = cursor.fetchall()
+    new_invoice["billing_mode"] = "PHASED"
+    new_invoice["quote_fully_invoiced"] = fully_invoiced
+    if ncf_assigned["warn_expiry"] or ncf_assigned["warn_exhaustion"]:
+        new_invoice["ncf_warning"] = {"expiry": ncf_assigned["warn_expiry"], "exhaustion": ncf_assigned["warn_exhaustion"]}
+    return new_invoice

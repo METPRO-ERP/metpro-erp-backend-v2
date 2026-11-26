@@ -102,6 +102,8 @@ from tax.router import router as tax_router
 from estimator.router import router as estimator_router, status_router as estimator_status_router
 from rfq.router import router as rfq_router  # after quotes: pdf/quotes imports are order sensitive
 from po.router import router as po_router
+from fiscal.router import router as fiscal_router
+from phases.router import router as phases_router
 
 
 app.include_router(auth_router)
@@ -110,6 +112,8 @@ app.include_router(clients_router)
 app.include_router(suppliers_router)
 app.include_router(rfq_router)
 app.include_router(po_router)
+app.include_router(fiscal_router)
+app.include_router(phases_router)
 app.include_router(products_router)
 app.include_router(quotes_router)
 app.include_router(invoices_router)
