@@ -38,7 +38,7 @@ def test_revenue_excludes_both_taxes(monkeypatch):
     cur.execute("INSERT INTO clients (company_name) VALUES ('C') RETURNING id")
     cid = cur.fetchone()["id"]
     # 1.8% invoice: subtotal 1000, tax 18, total 1018.  18% invoice: subtotal 1000, tax 180, total 1180.
-    for num, total, tax, code, rate, label in (("F-1", 1018, 18, "construction_17_2017", 0.018, "Construcción (Ley 17-2017)"),
+    for num, total, tax, code, rate, label in (("F-1", 1018, 18, "construction_17_2017", 0.018, "Construcción (1.8%)"),
                                                 ("F-2", 1180, 180, "itbis_18", 0.18, "ITBIS (18%)")):
         cur.execute("INSERT INTO invoices (invoice_number, client_id, status, total_amount, grand_total, itbis_total, amount_paid, "
                     "amount_due, invoice_date, tax_type_code, tax_rate, tax_label) VALUES (%s,%s,'Pending',%s,%s,%s,%s,%s,"

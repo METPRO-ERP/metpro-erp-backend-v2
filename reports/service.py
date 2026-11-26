@@ -94,7 +94,7 @@ def get_revenue_report(start_date: Optional[str], end_date: Optional[str],
     """
     Revenue from invoices and payments (R1). Quotes are not revenue.
 
-    Approved 2026-10-22: revenue is the subtotal BEFORE tax. Neither ITBIS nor Construcción (Ley 17-2017)
+    Approved 2026-10-22: revenue is the subtotal BEFORE tax. Neither ITBIS nor the construction tax (1.8%)
     contributes, whatever the document's tax type. Every figure below is net of the document's own tax (itbis_total
     holds whichever tax the document carries).
 

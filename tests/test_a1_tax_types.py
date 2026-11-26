@@ -143,8 +143,8 @@ def test_pdf_prints_the_stored_label(monkeypatch):
         transport=0, transport_pct=3, contingency=0, contingency_pct=3,
         subtotal_general=t["subtotal_general"], itbis=t["itbis"], grand_total=t["grand_total"],
     )
-    create_invoice_pdf(tax_label="Ley 17-2017 (1.8%)", **kwargs)
-    assert "Ley 17-2017 (1.8%):" in texts
+    create_invoice_pdf(tax_label="Construcción (1.8%)", **kwargs)
+    assert "Construcción (1.8%):" in texts
     assert "ITBIS (18%):" not in texts
     texts.clear()
     create_invoice_pdf(**kwargs)  # no label: generic text, never a wrong percentage
@@ -178,7 +178,7 @@ def db(monkeypatch):
                 "('00000000-0000-0000-0000-000000000001', 't_user', 'x', 't_user@test.local', 'user', true) "
                 "ON CONFLICT DO NOTHING")
     cur.execute("UPDATE tax_types SET rate = 0.1800, label = 'ITBIS (18%)', active = true WHERE code = 'itbis_18'")
-    cur.execute("UPDATE tax_types SET rate = 0.0180, label = 'Ley 17-2017 (1.8%)', active = true "
+    cur.execute("UPDATE tax_types SET rate = 0.0180, label = 'Construcción (1.8%)', active = true "
                 "WHERE code = 'construction_17_2017'")
     cur.execute("INSERT INTO clients (company_name, tax_id) VALUES ('Cliente A1', '1-31-00001-1') RETURNING id")
     cid = cur.fetchone()["id"]
@@ -190,7 +190,7 @@ def db(monkeypatch):
     conn = connect()
     cur = conn.cursor()
     cur.execute("UPDATE tax_types SET rate = 0.1800, label = 'ITBIS (18%)', active = true WHERE code = 'itbis_18'")
-    cur.execute("UPDATE tax_types SET rate = 0.0180, label = 'Ley 17-2017 (1.8%)', active = true "
+    cur.execute("UPDATE tax_types SET rate = 0.0180, label = 'Construcción (1.8%)', active = true "
                 "WHERE code = 'construction_17_2017'")
     conn.commit()
     conn.close()
@@ -237,7 +237,7 @@ def test_new_quote_defaults_to_the_default_type(db):
 @needs_db
 def test_quote_with_construction_type_taxes_at_its_rate(db):
     q = client.post("/quotes/", json=_body(db, tax_type_code="construction_17_2017"), headers=_hdr()).json()["data"]
-    assert q["tax_type_code"] == "construction_17_2017" and q["tax_label"] == "Ley 17-2017 (1.8%)"
+    assert q["tax_type_code"] == "construction_17_2017" and q["tax_label"] == "Construcción (1.8%)"
     assert float(q["tax_amount"]) == pytest.approx(18.0) and float(q["grand_total"]) == pytest.approx(1018.0)
 
 
@@ -262,7 +262,7 @@ def test_preview_uses_the_chosen_type(db):
                                                     "tax_type_code": "construction_17_2017"}, headers=_hdr())
     d = r.json()["data"]
     assert d["tax_rate"] == pytest.approx(0.018) and d["tax_amount"] == pytest.approx(18.0)
-    assert d["tax_type_code"] == "construction_17_2017" and d["tax_label"] == "Ley 17-2017 (1.8%)"
+    assert d["tax_type_code"] == "construction_17_2017" and d["tax_label"] == "Construcción (1.8%)"
     d = client.post("/quotes/totals/preview", json={"items": ITEMS, "included_charges": NO_CHARGES},
                     headers=_hdr()).json()["data"]
     assert d["tax_rate"] == pytest.approx(0.18) and d["tax_type_code"] == "itbis_18"
@@ -307,10 +307,10 @@ def test_snapshot_survives_a_rate_change_and_reaches_the_invoice(db):
     row = _row(db, "SELECT tax_type_code, tax_rate, tax_label, itbis_total, grand_total, total_amount FROM invoices WHERE id = %s",
                (inv["invoice_id"],))
     assert row["tax_type_code"] == "construction_17_2017" and float(row["tax_rate"]) == pytest.approx(0.018)
-    assert row["tax_label"] == "Ley 17-2017 (1.8%)"
+    assert row["tax_label"] == "Construcción (1.8%)"
     assert float(row["itbis_total"]) == pytest.approx(18.0) and float(row["grand_total"]) == pytest.approx(1018.0)
     quote = _row(db, "SELECT tax_rate, tax_label, tax_amount FROM quotes WHERE quote_id = %s", (qid,))
-    assert float(quote["tax_rate"]) == pytest.approx(0.018) and quote["tax_label"] == "Ley 17-2017 (1.8%)"
+    assert float(quote["tax_rate"]) == pytest.approx(0.018) and quote["tax_label"] == "Construcción (1.8%)"
 
 
 @needs_db
@@ -325,7 +325,7 @@ def test_invoice_pdf_totals_use_the_invoice_rate_not_18(db):
     raw = invoice["included_charges"]
     _items, totals = invoice_lines_and_totals(invoice, raw)
     assert totals["itbis"] == pytest.approx(18.0) and totals["grand_total"] == pytest.approx(1018.0)
-    assert totals["tax_label"] == "Ley 17-2017 (1.8%)" and totals["tax_rate"] == pytest.approx(0.018)
+    assert totals["tax_label"] == "Construcción (1.8%)" and totals["tax_rate"] == pytest.approx(0.018)
     for url in (f"/pdf/invoices/{inv['invoice_id']}", f"/invoices/{inv['invoice_id']}/pdf"):
         r = client.get(url, headers=_hdr())
         assert r.status_code in (200, 404), url
@@ -346,7 +346,7 @@ def test_public_payload_carries_label_and_rate(db):
     fin = client.post(f"/quotes/{q['quote_id']}/finalize", headers=_hdr()).json()["data"]
     token = _row(db, "SELECT public_token FROM quotes WHERE quote_id = %s", (q["quote_id"],))["public_token"]
     pub = client.get(f"/quotes/public/{token}").json()["data"]
-    assert pub["tax_label"] == "Ley 17-2017 (1.8%)" and float(pub["tax_rate"]) == pytest.approx(0.018)
+    assert pub["tax_label"] == "Construcción (1.8%)" and float(pub["tax_rate"]) == pytest.approx(0.018)
     assert "quote_id" not in pub and fin["tax_type_code"] == "construction_17_2017"
 
 

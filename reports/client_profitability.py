@@ -1,7 +1,7 @@
 """Client Profitability Report, Phase 1 (approved 2026-10-22). Read-only. Writes nothing.
 
 Rules:
-- Revenue = invoice total minus the invoice's own tax (itbis_total holds ITBIS or Construcción 17-2017).
+- Revenue = invoice total minus the invoice's own tax (itbis_total holds ITBIS or the construction tax (1.8%)).
   No tax ever counts as revenue. Cancelled invoices are left out. Invoice date decides the period.
 - COGS = product cost + known direct costs.
     product cost  = invoice line quantity x the product's CURRENT cost (same basis as the Product Cost module).
