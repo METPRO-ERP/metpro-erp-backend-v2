@@ -513,6 +513,12 @@ def delete_invoice(invoice_id: int, actor_user_id: Optional[str] = None) -> dict
             cursor.execute("SELECT status FROM invoices WHERE id = %s", (invoice_id,))
             invoice_status = (cursor.fetchone() or {}).get("status")
 
+        # A delivery record (ledger conduce) is never silently dropped with its invoice.
+        # to_jsonb keeps this safe when the ledger migration has not been applied yet (no such column).
+        cursor.execute("SELECT 1 FROM conduces WHERE invoice_id = %s AND to_jsonb(conduces)->>'delivery_seq' IS NOT NULL LIMIT 1", (invoice_id,))
+        if cursor.fetchone():
+            raise billing_error("INVOICE_HAS_DELIVERIES")
+
         cursor.execute("DELETE FROM invoice_items WHERE invoice_id = %s", (invoice_id,))
         # B-05: conduce records belong to the invoice (like its items). Without this the FK
         # made any invoice with a previewed conduce impossible to delete.

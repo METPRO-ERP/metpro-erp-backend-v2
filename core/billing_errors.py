@@ -14,6 +14,19 @@ ERRORS = {
     "PHASE_NOT_FOUND": (404, "Fase no encontrada"),
     "PHASE_ALREADY_INVOICED": (400, "Esta fase ya tiene factura"),
     "QUOTE_TOTAL_LOCKED_PHASED": (400, "No se puede cambiar el total: ya existe una factura por fases"),
+    # Conduce delivery ledger (2026-11-26)
+    "CONDUCE_NOT_FOUND": (404, "Conduce no encontrado. Cree un conduce primero"),
+    "CONDUCE_NO_LINES": (400, "Indique al menos una línea con cantidad a entregar"),
+    "CONDUCE_LINE_NOT_DELIVERABLE": (400, "Una de las líneas no es un item entregable de esta cotización"),
+    "CONDUCE_DUPLICATE_LINE": (400, "Una línea está repetida"),
+    "CONDUCE_QUANTITY_INVALID": (400, "La cantidad debe ser mayor que cero y tener máximo 2 decimales"),
+    "CONDUCE_DATE_INVALID": (400, "La fecha de entrega no puede ser futura"),
+    "CONDUCE_INVOICE_CANCELLED": (409, "La factura está anulada: no se puede crear un conduce"),
+    "CONDUCE_NO_DELIVERABLE_LINES": (409, "La cotización no tiene items entregables"),
+    "CONDUCE_OVER_DELIVERY": (409, "La cantidad excede lo pendiente de entregar"),
+    "CONDUCE_ALREADY_VOID": (409, "El conduce ya está anulado"),
+    "CONDUCE_VOID_REASON_REQUIRED": (400, "Indique el motivo de la anulación"),
+    "INVOICE_HAS_DELIVERIES": (409, "La factura tiene conduces de entrega registrados y no se puede eliminar"),
 }
 
 

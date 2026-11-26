@@ -104,6 +104,7 @@ from rfq.router import router as rfq_router  # after quotes: pdf/quotes imports 
 from po.router import router as po_router
 from fiscal.router import router as fiscal_router
 from phases.router import router as phases_router
+from conduces.router import router as conduces_router
 
 
 app.include_router(auth_router)
@@ -114,6 +115,7 @@ app.include_router(rfq_router)
 app.include_router(po_router)
 app.include_router(fiscal_router)
 app.include_router(phases_router)
+app.include_router(conduces_router)
 app.include_router(products_router)
 app.include_router(quotes_router)
 app.include_router(invoices_router)

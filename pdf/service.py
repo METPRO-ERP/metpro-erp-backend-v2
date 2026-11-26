@@ -367,6 +367,11 @@ def _record_conduce(conn, cursor, conduce_number, invoice_id, quote_number):
 # CONDUCE PDF GENERATION (NO PRICES)
 # ============================================================
 def generate_conduce_pdf(invoice_id: int, current_user: dict = None, print_seal: bool = False) -> StreamingResponse:
+    from core.conduce_ledger import ledger_enabled
+    if ledger_enabled():
+        # Ledger on: this route never creates a record. It serves the latest active conduce of the quote.
+        from conduces.pdf import latest_conduce_pdf_for_invoice
+        return latest_conduce_pdf_for_invoice(invoice_id, current_user, print_seal)
     seal = seal_for_pdf(print_seal)  # None unless the request asks for it
     conn = None
     try:
