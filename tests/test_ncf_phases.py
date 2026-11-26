@@ -187,7 +187,8 @@ def test_switch_off_no_ncf_pdf_byte_identical():
 def test_pdf_with_ncf_shows_title_ncf_and_expiry_and_keeps_footer_free_of_legends():
     from datetime import date
     t = text(build(doc_type="FACTURA", doc_id="F-10002", ncf="B0100000319", ncf_valid_until=date(2027, 3, 31)))
-    assert "Factura de Cr" in t and "NCF: B0100000319" in t and "lido hasta: 31/03/2027" in t
+    assert "Factura de Cr" in t and "NCF: B0100000319" in t and "Vencimiento NCF: 31/03/2027" in t
+    assert "lido hasta" not in t   # the old fiscal label is gone (the quote line reads "Válida Hasta", capital H)
     assert "F-10002" in t
     for banned in ("32-23", "QR", "Firma Digital", "digo de Seguridad"):
         assert banned not in t
@@ -686,7 +687,7 @@ def test_phase_invoice_pdf_uses_stored_itbis_and_prints_the_ncf(db, monkeypatch)
     iid = _invoice_phase(_phase(qid, "percent", 40, "Pago inicial / depósito").json()["data"]["id"]).json()["data"]["invoice_id"]
     pdf = client.get(f"/pdf/invoices/{iid}", headers=_hdr())
     t = text(pdf.content)
-    assert pdf.status_code == 200 and "NCF: B0100000319" in t and "Factura de Cr" in t and "lido hasta" in t
+    assert pdf.status_code == 200 and "NCF: B0100000319" in t and "Factura de Cr" in t and "Vencimiento NCF" in t
     assert "Pago inicial" in t and "Supervisi" not in t
     # Tamper with the stored ITBIS: the PDF follows the stored value, it never recomputes tax from the summary line.
     conn = db["connect"]()
