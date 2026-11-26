@@ -372,3 +372,29 @@ def test_detail_without_ncf_has_nulls_and_lists_keep_their_shape(db, monkeypatch
     assert detail["ncf"] is None and detail["ncf_valid_until"] is None
     listing = client.get("/invoices/", headers=_hdr()).json()["data"]
     assert listing and all("ncf" not in row and "ncf_valid_until" not in row for row in listing)
+
+
+# ============================================================ download path: payments summary and headers
+
+def _summary(t):
+    import re
+    w = re.findall(r"\((.*?)\) ?Tj", t)
+    i = w.index("Resumen de Pagos")
+    return dict(zip(("billed", "paid", "pending"), [w[w.index(k, i) + 1] for k in ("Total Facturado:", "Total Pagado:", "Pendiente:")]))
+
+
+@needs_db
+def test_download_path_payments_summary_follows_the_phase_invoice_and_prints_fiscal_and_client_blocks(db, monkeypatch):
+    qid, _, iid = _setup(db, monkeypatch, kind="fixed", value=5000, label="Anticipo")
+    assert client.post(f"/invoices/{iid}/payments", json={"amount": 1000.0, "method": "cash", "payment_date": "2026-11-26"},
+                       headers=_hdr()).status_code in (200, 201)
+    monkeypatch.setenv(SWITCH, "true")
+    on = ptext(_download(iid))
+    # The summary is the invoice's own: billed = this phase's total, paid = its payments, pending = the difference.
+    assert _summary(on) == {"billed": "$5,000.00", "paid": "$1,000.00", "pending": "$4,000.00"}
+    assert "TOTAL DE ESTA FACTURA:" in on and "$5,000.00" in on
+    for needle in ("Factura de Crédito Fiscal", "NCF: B01", "Vencimiento NCF", "Cliente M2", "DESCRIPCIÓN", "PRECIO UNIT."):
+        assert needle in on, needle
+    # Same summary with the switch OFF: the layout switch never touches the payments block.
+    monkeypatch.setenv(SWITCH, "false")
+    assert _summary(ptext(_download(iid))) == {"billed": "$5,000.00", "paid": "$1,000.00", "pending": "$4,000.00"}
