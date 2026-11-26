@@ -18,11 +18,37 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
 
 
+class _ConducePdf(FPDF):
+    """Conduce page footer: the real page number and the real total on EVERY page (fpdf2 total-pages alias).
+    Same mechanism as the RFQ and PO. Styling is the conduce's own (italic 8, grey 180)."""
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(180, 180, 180)
+        self.cell(0, 10, f"Página {self.page_no()} de {{nb}}", 0, 0, 'C')
+
+
+# Project-name value column: it starts at x=45 (left_x 10 + 35 label) and the client column starts at x=110.
+PROJECT_VALUE_X = 45
+PROJECT_VALUE_W = 64  # 110 - 45 minus a 1 mm gap
+
+
+def _project_value(pdf, text):
+    """Print the project name in full inside its column. A name that fits keeps the single-line cell; a longer one
+    wraps (long unbroken words break by character). Nothing is cut."""
+    if pdf.get_string_width(text) <= PROJECT_VALUE_W:
+        pdf.cell(0, 4, text, 0, 1)
+    else:
+        pdf.multi_cell(PROJECT_VALUE_W, 4, text, 0, 'L', new_x="LMARGIN", new_y="NEXT")
+
+
 def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, signer_name=None, seal=None):
     """Generate PDF bytes for a conduce (delivery note)."""
     from core.visibility import customer_items
     items = customer_items(items)  # A3: a hidden line is not shown to the customer on any document
-    pdf = FPDF()
+    pdf = _ConducePdf()
+    pdf.alias_nb_pages("{nb}")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
 
@@ -82,7 +108,8 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
         pdf.cell(35, 4, 'Proyecto:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(project_name)[:60], 0, 1)
+        _project_value(pdf, sanitize_text(project_name))
+    left_end_y = pdf.get_y()  # the left column can now be taller than the right one
 
     # Right column: Client
     pdf.set_xy(right_x, start_y)
@@ -111,6 +138,7 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
         pdf.set_text_color(30, 30, 30)
         pdf.cell(0, 4, sanitize_text(client["address"])[:40], 0, 1)
 
+    pdf.set_y(max(pdf.get_y(), left_end_y))  # the items start below BOTH columns
     pdf.ln(8)
 
     # ==================== ITEMS TABLE (NO PRICES) ====================
@@ -155,11 +183,7 @@ def create_conduce_pdf(doc_id, doc_date, client, project_name, notes, items, sig
     # ==================== SIGNATURES ====================
     add_footer_with_signature(pdf, signer_name, seal=seal)
 
-    # ==================== FOOTER ====================
-    pdf.set_y(-15)
-    pdf.set_font('Arial', 'I', 8)
-    pdf.set_text_color(180, 180, 180)
-    pdf.cell(0, 10, 'Página 1 de 1', 0, 0, 'C')
+    # Footer: _ConducePdf.footer() prints "Página X de Y" on every page.
 
     pdf_bytes = pdf.output()
     return io.BytesIO(pdf_bytes)

@@ -40,3 +40,190 @@ def test_twin_invoice_with_payment_unchanged():
 
 def test_twin_invoice_plain_unchanged():
     assert _twin_invoice() == TWIN_PLAIN_BUILD
+
+
+# ============================================================ conduce: page numbers and project-name wrap
+import re  # noqa: E402
+import zlib  # noqa: E402
+import ast  # noqa: E402
+import pathlib  # noqa: E402
+
+import pytest  # noqa: E402
+from fpdf import FPDF  # noqa: E402
+
+from pdf import builder_conduce  # noqa: E402
+
+PT = 72 / 25.4
+CLIENT = {"company_name": "Grupo Ramos Constructora SA", "contact_name": "Ana Perez",
+          "address": "Av. Winston Churchill 1099, Santo Domingo"}
+
+
+def _streams(pdf_bytes):
+    out = []
+    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.S):
+        try:
+            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
+        except Exception:
+            pass
+    return out
+
+
+def _page_count(pdf_bytes):
+    return len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes))
+
+
+def footers(pdf_bytes):
+    """[(page, total)] per page. fpdf2 emits the alias footer as two strings: (Página k de ) Tj (N) Tj."""
+    found = []
+    for s in _streams(pdf_bytes):
+        found += [(int(k), int(n)) for k, n in re.findall(r"\(P\xe1gina (\d+) de \) Tj \((\d+)\) Tj", s)]
+    return found
+
+
+def _cells(pdf_bytes):
+    """[(x_pt, y_pt, text)] for every single-string text cell, in drawing order."""
+    cells = []
+    for s in _streams(pdf_bytes):
+        cells += [(float(x), float(y), t) for x, y, t in re.findall(r"q BT ([\d.]+) ([\d.]+) Td [\d. ]+ rg \((.*?)\) Tj ET Q", s)]
+    return cells
+
+
+def conduce(n_items=3, project="Torre Norte", **kw):
+    items = [{"product_name": f"Item {i}", "quantity": 1} for i in range(n_items)]
+    return builder_conduce.create_conduce_pdf("C-1", "2026-11-03", dict(CLIENT), project, "", items, signer_name="Fabian").getvalue()
+
+
+# ---- Defect 1
+
+@pytest.mark.parametrize("wrap", ["true", "false"])
+@pytest.mark.parametrize("n", [0, 1, 30, 44, 45, 50, 52, 55, 60, 120, 250])
+def test_conduce_every_page_has_its_number_and_the_true_total(monkeypatch, n, wrap):
+    monkeypatch.setenv("PDF_DESC_WRAP_ENABLED", wrap)
+    out = conduce(n)
+    pages = _page_count(out)
+    assert footers(out) == [(k, pages) for k in range(1, pages + 1)]
+
+
+def test_single_page_conduce_is_one_page_and_says_1_of_1():
+    out = conduce(3)
+    assert _page_count(out) == 1  # base 86b8a47 produced a second, footer-only page here
+    assert footers(out) == [(1, 1)]
+
+
+def test_multi_page_conduce_numbers_all_pages():
+    out = conduce(120)
+    pages = _page_count(out)
+    assert pages >= 3
+    assert footers(out) == [(k, pages) for k in range(1, pages + 1)]
+
+
+def test_conduce_footer_style_unchanged():
+    # D1: italic 8, grey 180 (0.7059), centred as before.
+    s = "\n".join(_streams(conduce(3)))
+    assert re.search(r"/F\d+ 8\.00 Tf ET\s+q BT [\d.]+ [\d.]+ Td 0\.7059 0\.7059 0\.7059 rg \(P\xe1gina 1 de \) Tj \(1\) Tj", s)
+
+
+def _doc_footers(builder):
+    from pdf import builder_rfq, builder_po
+    doc = {"rfq_number": 1, "po_number": 1, "vendor_name": "V", "title": "T", "rfq_date": "2026-11-01", "po_date": "2026-11-01",
+           "status": "Draft", "subtotal": 1, "total": 1, "vendor_tax_id": "", "notes": "", "bill_to": "", "payment_terms": "",
+           "vendor_contact": "", "vendor_email": "", "vendor_phone": "", "vendor_address": ""}
+    items = [{"item": f"Item {i}", "description": "d", "quantity": 1, "unit": "u", "unit_price": 1, "amount": 1, "position": i} for i in range(120)]
+    fn = builder_rfq.create_rfq_pdf if builder == "rfq" else builder_po.create_po_pdf
+    out = fn(dict(doc), items)
+    return out.getvalue() if hasattr(out, "getvalue") else bytes(out)
+
+
+@pytest.mark.parametrize("which", ["rfq", "po"])
+def test_rfq_and_po_numbering_stays_correct(which):
+    out = _doc_footers(which)
+    pages = _page_count(out)
+    assert pages >= 3 and footers(out) == [(k, pages) for k in range(1, pages + 1)]
+
+
+def test_quote_and_invoice_print_no_page_claim():
+    # D2: numbering on quote/invoice is out of scope. Policy pinned: no "Página" text, so no false claim.
+    items = [{"product_name": f"Viga {i}", "quantity": 1, "unit_price": 100.0} for i in range(120)]
+    for doc_type in ("COTIZACION", "FACTURA"):
+        out = build(doc_type=doc_type, items=items, project_name=SHORT)
+        assert _page_count(out) >= 3
+        assert all("gina" not in s for s in _streams(out))
+
+
+# Every module that creates a PDF object, and its footer policy. A new builder fails here until it is classified.
+PDF_BUILDERS = {
+    "pdf/builder_conduce.py": "numbered (_ConducePdf)",
+    "pdf/builder_rfq.py": "numbered (_RfqPdf)",
+    "pdf/builder_po.py": "numbered (uses _RfqPdf)",
+    "pdf/builder_cover.py": "none",
+    "pdf/builder_terms.py": "none",
+    "pdf/utils/layout_utils.py": "none (quote and invoice)",
+}
+
+
+def test_closed_set_of_pdf_builders():
+    root = pathlib.Path(__file__).resolve().parent.parent
+    users = set()
+    for path in (root / "pdf").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and any(getattr(b, "id", "") == "FPDF" for b in node.bases):
+                users.add(str(path.relative_to(root)))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") in ("FPDF", "_RfqPdf", "_ConducePdf"):
+                users.add(str(path.relative_to(root)))
+    assert users == set(PDF_BUILDERS)
+
+
+# ---- Defect 2 (conduce)
+
+LONG_NAMES = {
+    "64": "Nave industrial en Santiago, proyecto de prueba con nombre largo",
+    "90": "Construccion de nave industrial y estructura metalica Fase 2 - Zona Franca Santiago",
+    "120": " ".join(f"palabra{i}" for i in range(14)),
+    "400": " ".join(f"palabra{i}" for i in range(50)),
+    "token80": "X" * 80,
+}
+
+
+def _project_lines(out):
+    cells = _cells(out)
+    i = next(k for k, c in enumerate(cells) if c[2] == "Proyecto:")
+    j = next(k for k, c in enumerate(cells) if c[2] == "Cliente:")
+    return cells[i + 1:j]
+
+
+@pytest.mark.parametrize("key", sorted(LONG_NAMES))
+def test_conduce_prints_the_whole_project_name(key):
+    name = LONG_NAMES[key]
+    out = conduce(3, project=name)
+    printed = "".join(t for _, _, t in _project_lines(out))
+    assert printed.replace(" ", "") == name.replace(" ", "")  # every character, nothing cut
+
+
+@pytest.mark.parametrize("key", sorted(LONG_NAMES))
+def test_conduce_project_name_stays_inside_its_column(key):
+    out = conduce(3, project=LONG_NAMES[key])
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "", 7)
+    for x, _, t in _project_lines(out):
+        assert x / PT + pdf.get_string_width(t) <= 110  # the client column starts at 110 mm
+
+
+@pytest.mark.parametrize("key", sorted(LONG_NAMES))
+def test_conduce_items_start_below_the_wrapped_project_name(key):
+    out = conduce(3, project=LONG_NAMES[key])
+    cells = _cells(out)
+    last_project_y = min(y for _, y, _ in _project_lines(out))  # PDF y grows upward
+    items_y = next(y for _, y, t in cells if t == "Items Entregados")
+    assert items_y < last_project_y
+
+
+def test_conduce_name_that_fits_keeps_one_line():
+    assert len(_project_lines(conduce(3, project="Torre Norte"))) == 1
+
+
+def test_conduce_wrap_and_page_numbers_together():
+    out = conduce(120, project=LONG_NAMES["400"])
+    pages = _page_count(out)
+    assert footers(out) == [(k, pages) for k in range(1, pages + 1)]
