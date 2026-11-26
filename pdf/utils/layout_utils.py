@@ -211,7 +211,7 @@ def build_quote_invoice_pdf(
         pdf.cell(0, 4, sanitize_text('NCF: ' + str(ncf)), 0, 1, 'R')
         if ncf_valid_until:
             pdf.set_font('Arial', '', 7)
-            pdf.cell(0, 4, sanitize_text('Válido hasta: ' + fmt_day(ncf_valid_until)), 0, 1, 'R')
+            pdf.cell(0, 4, sanitize_text('Vencimiento NCF: ' + fmt_day(ncf_valid_until)), 0, 1, 'R')
         pdf.ln(1)
     pdf.set_draw_color(220, 220, 220)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
