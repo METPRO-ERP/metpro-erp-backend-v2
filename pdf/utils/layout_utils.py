@@ -128,6 +128,75 @@ def item_row(pdf, desc_w, desc, cells, fill=True):
     pdf.set_x(x)
 
 
+def _pct_text(value) -> str:
+    return f"{float(value):.2f}".rstrip("0").rstrip(".") + "%"
+
+
+PHASE_BLOCK_H = 62  # mm kept together: heading, phase line, base, tax, boxed total, accumulated, pending, note
+
+
+def _phase_block(pdf, d):
+    """The "Facturación por fases" block (PHASE_INVOICE_LAYOUT_ENABLED). Every figure is a stored value given by the
+    caller; nothing here calls a tax function, and no rate is printed next to the phase tax (it is a stored
+    pro-rata share, not rate x the printed lines)."""
+    if pdf.get_y() + PHASE_BLOCK_H > pdf.h - 15:
+        pdf.add_page()  # the dominant total is never split from its lines
+    pdf.set_x(10)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(0, 5, sanitize_text('Facturación por fases'), 0, 1, 'L')
+    pdf.ln(1)
+
+    y0 = pdf.get_y()
+    pdf.set_x(10)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.multi_cell(110, 5, sanitize_text(f"Fase {d['number']} - {d['label']}"), 0, 'L')
+    y1 = pdf.get_y()
+    if d['input_type'] == 'percent' and d.get('input_value') is not None:
+        basis = f"{_pct_text(d['input_value'])} del total de la cotización"
+    elif d['input_type'] == 'fixed':
+        basis = "Monto fijo acordado"  # no percentage was agreed; none is derived
+    else:
+        basis = "Saldo final"
+    pdf.set_xy(120, y0)
+    pdf.set_font('Arial', '', 7)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(80, 5, sanitize_text(basis), 0, 1, 'R')
+    pdf.set_y(max(y1, y0 + 5) + 1)
+
+    x, lw, vw = 110, 60, 30
+    tax_line = f"{d.get('tax_word') or 'ITBIS'} de la fase (parte proporcional):"
+    for lbl, val in (("Base de la fase:", d['base']), (tax_line, d['itbis'])):
+        pdf.set_x(x)
+        pdf.set_font('Arial', '', 7)
+        pdf.set_text_color(60, 60, 60)
+        pdf.cell(lw, 4.5, sanitize_text(lbl), 0, 0, 'L')
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(vw, 4.5, f"${val:,.2f}", 0, 1, 'R')
+    pdf.ln(1)
+    pdf.set_x(x)
+    pdf.set_fill_color(235, 235, 235)
+    pdf.set_draw_color(120, 120, 120)
+    pdf.set_font('Arial', 'B', 12)
+    pdf.set_text_color(20, 20, 20)
+    pdf.cell(lw, 9, 'TOTAL DE ESTA FACTURA:', 1, 0, 'L', True)
+    pdf.cell(vw, 9, f"${d['total']:,.2f}", 1, 1, 'R', True)
+    pdf.ln(2)
+    for lbl, val in (("Facturado acumulado (incl. esta fase):", d['cumulative']), ("Pendiente de facturar:", d['pending'])):
+        pdf.set_x(x)
+        pdf.set_font('Arial', '', 7)
+        pdf.set_text_color(60, 60, 60)
+        pdf.cell(lw, 4.5, sanitize_text(lbl), 0, 0, 'L')
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(vw, 4.5, f"${val:,.2f}", 0, 1, 'R')
+    pdf.ln(2)
+    pdf.set_x(10)
+    pdf.set_font('Arial', '', 6)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(190, 3.2, sanitize_text("El ITBIS de cada fase es la parte proporcional del ITBIS de la cotización. "
+                                           "No se calcula sobre los renglones impresos."), 0, 'L')
+
+
 def build_quote_invoice_pdf(
     doc_type, doc_id, doc_date, client, project_name, notes, items,
     charges, items_total, total_discounts, items_after_discount,
@@ -145,7 +214,8 @@ def build_quote_invoice_pdf(
     print_items=True,
     full_copy=False,
     ncf=None,
-    ncf_valid_until=None
+    ncf_valid_until=None,
+    phase_doc=None
 ):
     payments = payments or []
     amount_paid = amount_paid or 0
@@ -390,7 +460,7 @@ def build_quote_invoice_pdf(
 
     pdf.set_font('Arial', 'B', 9)
     pdf.set_text_color(30, 30, 30)
-    pdf.cell(0, 5, 'Resumen Financiero', 0, 1, 'L')
+    pdf.cell(0, 5, sanitize_text('Resumen Financiero de la Cotización ' + str(phase_doc['quote_label'])) if phase_doc else 'Resumen Financiero', 0, 1, 'L')
     pdf.ln(2)
 
     pdf.set_font('Arial', '', 7)
@@ -491,13 +561,24 @@ def build_quote_invoice_pdf(
     pdf.line(summary_x, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(2)
 
-    pdf.set_x(summary_x)
-    pdf.set_font('Arial', 'B', 11)
-    pdf.set_text_color(30, 30, 30)
-    pdf.cell(45, 7, 'TOTAL GENERAL:', 0, 0, 'L')
-    pdf.cell(25, 7, f'${grand_total:,.2f}', 0, 1, 'R')
+    if phase_doc:
+        # Phase invoice (switch ON): the quote's total is secondary; the phase block carries the dominant total.
+        pdf.set_x(summary_x)
+        pdf.set_font('Arial', 'B', 8)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(45, 6, sanitize_text('TOTAL COTIZACIÓN:'), 0, 0, 'L')
+        pdf.cell(25, 6, f"${phase_doc['quote_total']:,.2f}", 0, 1, 'R')
+        pdf.ln(6)
+        _phase_block(pdf, phase_doc)
+        pdf.ln(6)
+    else:
+        pdf.set_x(summary_x)
+        pdf.set_font('Arial', 'B', 11)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(45, 7, 'TOTAL GENERAL:', 0, 0, 'L')
+        pdf.cell(25, 7, f'${grand_total:,.2f}', 0, 1, 'R')
 
-    pdf.ln(8)
+        pdf.ln(8)
 
     # ==================== PAYMENT SECTION (INVOICES ONLY) ====================
     if doc_type != 'COTIZACION':

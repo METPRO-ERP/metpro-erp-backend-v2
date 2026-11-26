@@ -15,6 +15,7 @@ from pdf.builder_invoice import create_invoice_pdf
 from pdf.builder_conduce import create_conduce_pdf
 from pdf.utils.layout_utils import build_quote_invoice_pdf
 from pdf.utils.signer import resolve_signer_name
+from pdf.phase_document import phase_layout_override
 from core.numbering import quote_label_for, conduce_label, conduce_label_from_invoice_number
 from core.errors import internal_error
 from company_settings.service import seal_for_pdf
@@ -288,7 +289,7 @@ def generate_invoice_pdf(invoice_id: int, current_user: dict = None, print_seal:
 
         doc_date = format_date(invoice['invoice_date'])
 
-        pdf_stream = build_quote_invoice_pdf(
+        _args = dict(
             doc_type='FACTURA',
             doc_id=invoice['invoice_number'],
             doc_date=doc_date,
@@ -325,6 +326,9 @@ def generate_invoice_pdf(invoice_id: int, current_user: dict = None, print_seal:
             full_copy=full_copy,
             **ncf_pdf_kwargs(dict(invoice)),
         )
+        # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice (then the quote's lines and summary + the phase block).
+        _args.update(phase_layout_override(dict(invoice)))
+        pdf_stream = build_quote_invoice_pdf(**_args)
 
         return StreamingResponse(
             pdf_stream,

@@ -5,7 +5,7 @@ import base64
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Response, UploadFile
 from typing import Annotated, List, Optional
 
-from .models import Invoice, InvoiceCreate, InvoiceStatusUpdate
+from .models import Invoice, InvoiceCreate, InvoiceDetail, InvoiceStatusUpdate
 from . import service
 from auth.service import require_auth, require_role, _allowed_roles
 from core.role_policy import enforce_admin
@@ -26,6 +26,7 @@ from psycopg2.extras import RealDictCursor
 from email_service import send_invoice_email
 from invoices.service import calculate_invoice_totals
 from pdf.builder_invoice import create_invoice_pdf
+from pdf.phase_document import phase_layout_override
 from pdf.utils.signer import resolve_signer_name
 from company_settings.service import seal_for_pdf
 
@@ -108,7 +109,7 @@ def send_invoice(
         conn.close()
     # -------------------------------------------------------------------------------
 
-    pdf_stream = create_invoice_pdf(
+    _args = dict(
         print_items=invoice.get("print_items", True) is not False,  # PDF update: false = no item table
         doc_type="FACTURA",
         signer_name=resolve_signer_name(current_user, invoice.get("created_by_name")),
@@ -144,6 +145,9 @@ def send_invoice(
         seal=seal,
         **service.ncf_pdf_kwargs(invoice),
     )
+    # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice.
+    _args.update(phase_layout_override(invoice))
+    pdf_stream = create_invoice_pdf(**_args)
 
     pdf_bytes = pdf_stream.read()
 
@@ -167,10 +171,10 @@ def get_invoice_status_history(invoice_id: int, current_user: dict = Depends(req
     return service.get_invoice_status_history(invoice_id)
 
 
-@router.get("/{invoice_id}", response_model=Invoice)
+@router.get("/{invoice_id}", response_model=InvoiceDetail)
 def get_invoice(invoice_id: int, current_user: dict = Depends(require_auth)):
     result = service.get_invoice_by_id(invoice_id)
-    return Invoice(**result)
+    return InvoiceDetail(**result)
 
 
 @router.get("/number/{invoice_number}", response_model=Invoice)
@@ -343,7 +347,7 @@ def _render_public_invoice_pdf(invoice_id: int) -> Response:
     finally:
         conn.close()
 
-    pdf_stream = create_invoice_pdf(
+    _args = dict(
         print_items=invoice.get("print_items", True) is not False,  # PDF update: false = no item table
         doc_type="FACTURA",
         signer_name=resolve_signer_name(None, invoice.get("created_by_name")),
@@ -385,6 +389,9 @@ def _render_public_invoice_pdf(invoice_id: int) -> Response:
         payments=payments,
         **service.ncf_pdf_kwargs(invoice),
     )
+    # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice.
+    _args.update(phase_layout_override(invoice))
+    pdf_stream = create_invoice_pdf(**_args)
 
     pdf_bytes = pdf_stream.read()
 

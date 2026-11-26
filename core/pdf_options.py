@@ -31,6 +31,12 @@ def project_desc_enabled() -> bool:
     return _on("PDF_PROJECT_DESC_ENABLED")
 
 
+def phase_layout_enabled() -> bool:
+    """Phase invoices print the source quote's lines and summary plus a "Facturación por fases" block.
+    Default OFF: a phase invoice prints exactly as before. Rendering only; no tax, NCF or totals logic."""
+    return _on("PHASE_INVOICE_LAYOUT_ENABLED")
+
+
 def desc_wrap_enabled() -> bool:
     """Item descriptions wrap onto extra lines instead of being cut (quote, invoice, conduce)."""
     return _on("PDF_DESC_WRAP_ENABLED")

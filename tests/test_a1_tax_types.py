@@ -115,7 +115,18 @@ def test_every_pdf_call_passes_the_tax_label():
                 name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
                 if name in names:
                     # conduce and the wrappers' own forwarding calls are covered by the same rule
-                    assert any(k.arg == "tax_label" for k in node.keywords), f"{os.path.relpath(path, ROOT)}:{node.lineno}"
+                    where = f"{os.path.relpath(path, ROOT)}:{node.lineno}"
+                    if any(k.arg == "tax_label" for k in node.keywords):
+                        pass
+                    elif any(k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "_args" for k in node.keywords):
+                        # Phase layout (2026-11-26): the call is create_x(**_args). The dict it unpacks must carry tax_label.
+                        assert any(
+                            isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "_args" for t in n.targets)
+                            and isinstance(n.value, ast.Call) and any(k.arg == "tax_label" for k in n.value.keywords)
+                            for n in ast.walk(tree)
+                        ), where
+                    else:
+                        raise AssertionError(where)
                     seen += 1
     assert seen >= 7
 

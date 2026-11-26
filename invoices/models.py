@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import date, datetime
 
 
 class InvoiceBase(BaseModel):
@@ -33,6 +33,13 @@ class Invoice(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InvoiceDetail(Invoice):
+    """GET /invoices/{id} only. Adds the fiscal number for the detail page; list and other endpoints keep the
+    Invoice shape. Both fields are null for an invoice without an NCF."""
+    ncf: Optional[str] = None
+    ncf_valid_until: Optional[date] = None
 
 
 class InvoiceCreate(InvoiceBase):

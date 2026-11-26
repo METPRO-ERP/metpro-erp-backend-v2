@@ -300,6 +300,13 @@ def get_invoice_by_id(invoice_id: int) -> dict:
 
         invoice = dict(invoice)
 
+        # NCF expiry for the detail page (read-only; the NCF itself is already on the row). Only when an NCF exists.
+        invoice["ncf_valid_until"] = None
+        if invoice.get("ncf") and invoice.get("fiscal_sequence_id"):
+            cursor.execute("SELECT expiry_date FROM fiscal_sequences WHERE id = %s", (invoice["fiscal_sequence_id"],))
+            seq = cursor.fetchone()
+            invoice["ncf_valid_until"] = seq["expiry_date"] if seq else None
+
         # Balances. amount_due = 0 means fully paid; only NULL falls back to total - paid.
         invoice["amount_paid"] = float(invoice.get("amount_paid") or 0)
         if invoice.get("amount_due") is None:
