@@ -49,6 +49,14 @@ def payment_options(current_user: dict = Depends(require_auth)):
             "record_admin_only": payment_record_admin_only()}
 
 
+@router.get("/overdue")
+def get_overdue_invoices(current_user: dict = Depends(require_auth)):
+    """R2. PAYMENT_DUE_ENABLED (404 while off). Read-only: overdue invoices aged on their own due date, in buckets,
+    plus the open invoices that have no due date ("Sin plazo"). Declared before /{invoice_id}."""
+    payment_due.require_enabled()
+    return service.get_overdue_report()
+
+
 @router.get("/", response_model=List[Invoice])
 def get_invoices(
     client_id: Optional[int] = None,

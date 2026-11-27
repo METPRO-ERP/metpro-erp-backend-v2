@@ -261,6 +261,19 @@ def get_all_invoices(client_id: Optional[int] = None, status: Optional[str] = No
             conn.close()
 
 
+def get_overdue_report(today=None) -> dict:
+    """R2 (PAYMENT_DUE_ENABLED, the route checks the switch). Read-only: one SELECT, nothing written."""
+    from core import overdue
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        return overdue.fetch_report(cursor, today)
+    finally:
+        if conn:
+            conn.close()
+
+
 def get_invoice_status_history(invoice_id: int) -> dict:
     """Full history, newest first. enabled=false when the switch is off."""
     conn = None
