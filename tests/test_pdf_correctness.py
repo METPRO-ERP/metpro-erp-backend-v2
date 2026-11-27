@@ -155,6 +155,7 @@ PDF_BUILDERS = {
     "pdf/builder_conduce.py": "numbered (_ConducePdf)",
     "pdf/builder_rfq.py": "numbered (_RfqPdf)",
     "pdf/builder_po.py": "numbered (uses _RfqPdf)",
+    "pdf/builder_receipt.py": "numbered (_ReceiptPdf, R3)",
     "pdf/builder_cover.py": "none",
     "pdf/builder_terms.py": "none",
     "pdf/utils/layout_utils.py": "none (quote and invoice)",
