@@ -114,6 +114,7 @@ LIST_PAYMENTS_SQL = """
            p.created_at, p.created_by_user_id,
            (SELECT COALESCE(u.full_name, u.username) FROM users u WHERE u.id = p.created_by_user_id) AS created_by_name,
            p.backfilled,
+           (p.paid_so_far_after IS NOT NULL AND p.voided_at IS NULL) AS has_receipt,
            p.corrects_payment_id,
            (SELECT c.id FROM invoice_payments c WHERE c.corrects_payment_id = p.id) AS corrected_by_payment_id,
            CASE WHEN p.corrects_payment_id IS NOT NULL

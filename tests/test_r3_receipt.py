@@ -292,7 +292,25 @@ def test_payment_flow_is_unchanged_apart_from_the_two_stored_figures(db):
     assert _pay(iid, total).status_code == 400                         # still refused: exceeds the pending amount
     listed = client.get(f"/invoices/{iid}/payments", headers=_admin()).json()["data"]
     assert [x["id"] for x in listed] == [p]
-    assert "paid_so_far_after" not in listed[0]                        # the list payload did not grow
+    assert "paid_so_far_after" not in listed[0] and "pending_after" not in listed[0]   # the figures stay out of the list
+    assert listed[0]["has_receipt"] is True                            # one additive flag for the screen
+
+
+@needs_db
+def test_list_flags_which_payments_can_have_a_receipt(db):
+    iid, _ = _invoice(db)
+    new = _pay(iid, 100.0).json()["data"]["payment_id"]
+    voided = _pay(iid, 50.0).json()["data"]["payment_id"]
+    client.post(f"/invoices/{iid}/payments/{voided}/void", json={"reason": "error"}, headers=_admin())
+    conn = db["connect"]()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO invoice_payments (invoice_id, amount, method, payment_date) VALUES (%s, 10, 'x', CURRENT_DATE) "
+                "RETURNING id", (iid,))
+    old = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    flags = {x["id"]: x["has_receipt"] for x in client.get(f"/invoices/{iid}/payments", headers=_admin()).json()["data"]}
+    assert flags == {new: True, voided: False, old: False}             # live+stored, voided, pre-R3
 
 
 # ---- the route
@@ -335,7 +353,9 @@ def test_receipt_prints_the_stored_figures_not_a_recomputation(db, monkeypatch):
     a = _pay(iid, 300.0).json()["data"]["payment_id"]
     b = _pay(iid, 200.0).json()["data"]["payment_id"]
     client.post(f"/invoices/{iid}/payments/{a}/void", json={"reason": "error"}, headers=_admin())
-    t = ptext(_receipt(iid, b).content)                                # live total is now 200, stored figure is 500
+    r = _receipt(iid, b)
+    assert r.status_code == 200, r.text                                # live total is now 200, stored figure is 500
+    t = ptext(r.content)
     assert f"RD$ {500:,.2f}" in t and f"RD$ {total - 500:,.2f}" in t
 
 
