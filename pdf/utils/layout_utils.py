@@ -670,20 +670,25 @@ def build_quote_invoice_pdf(
                 pay_amount = float(p.get("amount") or 0)
                 pay_notes = sanitize_text(str(p.get("notes") or ""))
 
-                if pdf.get_string_width(pay_notes) <= 70 - 2 * pdf.c_margin:
+                if (pdf.get_string_width(pay_notes) <= 70 - 2 * pdf.c_margin
+                        and pdf.get_string_width(pay_method) <= 40 - 2 * pdf.c_margin):
                     pdf.cell(40, 5, pay_date[:20], 1, 0, "L")
                     pdf.cell(40, 5, pay_method[:20], 1, 0, "L")
                     pdf.cell(40, 5, f"${pay_amount:,.2f}", 1, 0, "R")
                     pdf.cell(70, 5, pay_notes, 1, 1, "L")
                 else:
-                    # R1: a long note wraps inside its cell; the row grows to fit and the other cells share its height.
-                    n_lines = len(pdf.multi_cell(70, 5, pay_notes, split_only=True))
+                    # R1: a long método or note wraps inside its cell; the row grows to fit and the other cells share its height.
+                    n_lines = max(len(pdf.multi_cell(70, 5, pay_notes, split_only=True)),
+                                  len(pdf.multi_cell(40, 5, pay_method, split_only=True)))
                     row_h = 5 * max(1, n_lines)
                     if pdf.will_page_break(row_h):
                         pdf.add_page()
                     x0, y0 = pdf.get_x(), pdf.get_y()
                     pdf.cell(40, row_h, pay_date[:20], 1, 0, "L")
-                    pdf.cell(40, row_h, pay_method[:20], 1, 0, "L")
+                    pdf.rect(x0 + 40, y0, 40, row_h)
+                    pdf.set_xy(x0 + 40, y0)
+                    pdf.multi_cell(40, 5, pay_method, 0, "L", new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_xy(x0 + 80, y0)
                     pdf.cell(40, row_h, f"${pay_amount:,.2f}", 1, 0, "R")
                     pdf.rect(x0 + 120, y0, 70, row_h)
                     pdf.set_xy(x0 + 120, y0)

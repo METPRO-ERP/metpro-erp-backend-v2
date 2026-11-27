@@ -26,10 +26,12 @@ SHORT = {"company_name": "Cliente SRL", "contact_name": "Juan Perez", "email": "
 PAY = [{"payment_date": "2026-11-20", "method": "Transferencia",
         "amount": 1500000, "notes": "Transferencia ref. 884412990033 correspondiente al primer avance de obra segun acuerdo del 15 de noviembre con la gerencia"}]
 PROD = ("PDF_DESC_WRAP_ENABLED", "PDF_PROJECT_DESC_ENABLED", "PORTADA_NOTE_ENABLED", "PAYMENT_DUE_ENABLED")
+PAY_M = [dict(PAY[0], method="Transferencia bancaria BHD Leon cuenta corriente en pesos dominicanos")]
 GOLDEN = {
     "all_long_invoice": "62cc714f3865648fbb6ff3baaec6cc6a5e02dc361e3237c2113f359641be7a99",
     "all_long_quote": "6a2991bff2655d6a8f759bb75a87c56f0818d7e8cda3451259632b0522e26560",
-    "long_payment_note": "b82d5735e1577b24fcecc5d38c13d1fe0ff5d90d535fe5b30ef8c4a24444a418",
+    "long_payment_note": "71b90ce1db66d4268528fcdd109c72da42891916d64facb5e4f49cacb6c1ee58",
+    "long_payment_method": "fb10f26b07318b605fcfcf35be8b09b2246d2eaa6b9826343f4a9fd8349a24de",
 }
 
 
@@ -44,6 +46,8 @@ CASES = {
     "all_long_quote": dict(doc_type="COTIZACION", doc_id="Q-9999", client=LONGC, payment_terms="Credito 30 dias"),
     "long_payment_note": dict(doc_type="FACTURA", doc_id="F-9999", client=SHORT, payment_terms="Credito 30 dias",
                               payments=PAY, amount_paid=1500000.0, amount_due=500000.0),
+    "long_payment_method": dict(doc_type="FACTURA", doc_id="F-9999", client=SHORT, payment_terms="Credito 30 dias",
+                                payments=PAY_M, amount_paid=1500000.0, amount_due=500000.0),
 }
 
 
@@ -70,3 +74,8 @@ def test_header_grows_so_items_do_not_overlap():
     # the items heading must come after the RNC line in the content stream
     t = ptext(long_)
     assert t.index("101-00000-0)") < t.index("Detalle de Items")
+
+
+def test_long_payment_method_prints_in_full():
+    t = ptext(build(**CASES["long_payment_method"]))
+    assert "pesos dominicanos" in t
