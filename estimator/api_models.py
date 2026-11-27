@@ -38,6 +38,7 @@ class GenerateRequest(EstimateRequest):
     notes: Optional[str] = None
     payment_terms: Optional[str] = None
     valid_until: Optional[date] = None
+    credit_days: Optional[int] = Field(default=None, ge=0, le=365)  # PAYMENT_DUE_ENABLED; ignored while off
 
 
 class ParityRequest(BaseModel):

@@ -90,6 +90,8 @@ class QuoteBase(BaseModel):
     # NEW FIELDS
     payment_terms: Optional[str] = None
     valid_until: Optional[date] = None
+    # PAYMENT_DUE_ENABLED: days of credit (0 = contado). None = no structured term. Ignored while the switch is off.
+    credit_days: Optional[int] = Field(default=None, ge=0, le=365)
 
     items: List[QuoteItemBase]
     included_charges: IncludedCharges = IncludedCharges()
@@ -117,6 +119,7 @@ class QuoteUpdate(BaseModel):
     # NEW FIELDS
     payment_terms: Optional[str] = None
     valid_until: Optional[date] = None
+    credit_days: Optional[int] = Field(default=None, ge=0, le=365)  # sent null = clear; see QuoteBase
 
     items: Optional[List[QuoteItemBase]] = None
     included_charges: Optional[IncludedCharges] = None

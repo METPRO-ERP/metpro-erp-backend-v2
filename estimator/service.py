@@ -187,6 +187,7 @@ def generate(req, user: dict) -> dict:
         quote_id = create_quote_in_tx(
             cur, req.client_id, req.contact_id, req.project_name, req.notes, b["quote_items"], _charges(),
             req.payment_terms, req.valid_until, user_id, ESTIMATE_TAX_CODE, quote_type="engineering_estimate",
+            credit_days=req.credit_days,
         )
         cur.execute("SELECT id, quote_number, grand_total FROM quotes WHERE quote_id = %s", (quote_id,))
         qrow = cur.fetchone()

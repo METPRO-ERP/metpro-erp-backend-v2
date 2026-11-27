@@ -27,6 +27,12 @@ ERRORS = {
     "CONDUCE_ALREADY_VOID": (409, "El conduce ya está anulado"),
     "CONDUCE_VOID_REASON_REQUIRED": (400, "Indique el motivo de la anulación"),
     "INVOICE_HAS_DELIVERIES": (409, "La factura tiene conduces de entrega registrados y no se puede eliminar"),
+    # Payment terms days and invoice due date (2026-11-26, PAYMENT_DUE_ENABLED)
+    "DUE_DATE_NOTE_REQUIRED": (400, "Indique el motivo del cambio de la fecha de vencimiento"),
+    "DUE_DATE_UNCHANGED": (400, "La fecha de vencimiento es la misma que ya tiene la factura"),
+    "DUE_DATE_BEFORE_INVOICE": (400, "La fecha de vencimiento no puede ser anterior a la fecha de la factura"),
+    "INVOICE_DUE_DATE_LOCKED": (409, "La fecha de vencimiento no se puede cambiar en una factura pagada o anulada"),
+    "INVOICE_HAS_DUE_DATE_AUDIT": (409, "La factura tiene cambios de fecha de vencimiento registrados y no se puede eliminar"),
 }
 
 

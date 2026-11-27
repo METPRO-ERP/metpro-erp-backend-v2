@@ -17,6 +17,7 @@ from estimator.quote_lock import ADMIN_ROLES, is_estimate, money_changes
 from psycopg2.extras import RealDictCursor, execute_values
 from core import pdf_options
 from core import status_history
+from core import payment_due
 
 INS_SQL = "INSERT INTO quote_items (quote_id, product_name, quantity, unit_price, discount_type, discount_value) VALUES %s"
 # Create and update paths. Requires quoting_v1 migration (item_type, description).
@@ -294,6 +295,7 @@ def create_quote_in_tx(
     tax_type_code: Optional[str] = None,
     quote_type: Optional[str] = None,
     print_items: bool = True,
+    credit_days: Optional[int] = None,
 ) -> str:
     """Validate and insert a Draft quote and its lines on the caller's cursor. No commit. Returns quote_id.
 
@@ -386,6 +388,10 @@ def create_quote_in_tx(
         pdf_options.fill_units_from_products(cursor, items)
         sql, rows = pdf_options.with_units(INS_ITEMS_SQL, rows, items)
         execute_values(cursor, sql, rows)
+    # PAYMENT_DUE_ENABLED: the structured term is its own statement, so the INSERT above is unchanged (and the
+    # standard path works before the migration). Off = ignored.
+    if credit_days is not None and payment_due.enabled():
+        payment_due.write_credit_days(cursor, quote_id, credit_days)
     return quote_id
 
 
@@ -401,6 +407,7 @@ def create_quote(
     created_by_user_id: Optional[str] = None,
     tax_type_code: Optional[str] = None,
     print_items: bool = True,
+    credit_days: Optional[int] = None,
 ) -> dict:
     conn = None
     try:
@@ -410,6 +417,7 @@ def create_quote(
         quote_id = create_quote_in_tx(
             cursor, client_id, contact_id, project_name, notes, items, included_charges,
             payment_terms, valid_until, created_by_user_id, tax_type_code, print_items=print_items,
+            credit_days=credit_days,
         )
 
         conn.commit()
@@ -469,6 +477,8 @@ def get_quote_by_id(quote_id: str) -> dict:
             raise api_error(404, "Cotización no encontrada", "QUOTE_NOT_FOUND")
 
         quote = dict(quote)
+        if payment_due.enabled():  # key present only while the switch is on
+            quote["credit_days"] = payment_due.read_credit_days(cursor, quote_id)
 
         cursor.execute("SELECT * FROM quote_items WHERE quote_id = %s ORDER BY id", (quote_id,))
         quote["items"] = cursor.fetchall()
@@ -654,6 +664,10 @@ def update_quote(quote_id: str, quote_update, actor: Optional[dict] = None) -> d
 
         update_dict = quote_update.dict(exclude_unset=True)
 
+        # PAYMENT_DUE_ENABLED: always taken out so the generic UPDATE below never names the new column (off = ignored).
+        credit_days_sent = 'credit_days' in update_dict
+        credit_days = update_dict.pop('credit_days', None)
+
         # Pull these out — they're handled separately below.
         items = update_dict.pop('items', None)
         included_charges = update_dict.pop('included_charges', None)
@@ -699,6 +713,10 @@ def update_quote(quote_id: str, quote_update, actor: Optional[dict] = None) -> d
 
         if 'valid_until' in update_dict and update_dict['valid_until'] is not None:
             update_dict['valid_until'] = _serialize_date(update_dict['valid_until'])
+
+        if credit_days_sent and payment_due.enabled():
+            payment_due.write_credit_days(cursor, quote_id, credit_days)
+            cursor.execute("UPDATE quotes SET updated_at = CURRENT_TIMESTAMP WHERE quote_id = %s", (quote_id,))
 
         if print_items is not None:
             # Display only: totals are untouched. Allowed on estimate quotes (no money change).
@@ -1039,6 +1057,8 @@ def duplicate_quote(
             execute_values(cursor, sql, rows)
         if original.get("print_items") is False:
             cursor.execute("UPDATE quotes SET print_items = false WHERE quote_id = %s", (new_quote_id,))
+        if payment_due.enabled():  # the copy keeps the structured term, like payment_terms
+            payment_due.copy_credit_days(cursor, quote_id, new_quote_id)
         status_history.record(cursor, status_history.QUOTE, new_quote_id, None, "Draft", created_by_user_id,
                               note="duplicate of " + str(quote_id))
 
@@ -1505,6 +1525,8 @@ def convert_quote_to_invoice(quote_id: str, created_by_user_id: Optional[str] = 
         invoice_id = cursor.fetchone()["id"]   # FIXED
         if ncf_assigned:
             fiscal_ncf.attach_to_invoice(cursor, invoice_id, ncf_assigned)
+        # PAYMENT_DUE_ENABLED: the due date is stored once, here, from the invoice's own issue date. Off = no statement.
+        payment_due.snapshot_due_date(cursor, invoice_id, quote_id, invoice_date)
 
         # 5. Insert invoice items
         invoice_item_rows = [
@@ -1644,6 +1666,8 @@ def _convert_phased(conn, cursor, quote: dict, created_by_user_id: Optional[str]
     ))
     invoice_id = cursor.fetchone()["id"]
     fiscal_ncf.attach_to_invoice(cursor, invoice_id, ncf_assigned)
+    # D6: the phase invoice's own issue date + the quote's credit days, stored on this invoice (no per-phase field).
+    payment_due.snapshot_due_date(cursor, invoice_id, quote_id, today)
 
     cursor.execute(
         "INSERT INTO invoice_items (invoice_id, product_id, description, quantity, unit_price, discount, total, category, line_no, print_on_pdf) "

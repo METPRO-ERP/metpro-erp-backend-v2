@@ -47,6 +47,7 @@ def create_quote(quote: QuoteCreate, current_user: dict = Depends(require_auth))
         created_by_user_id=current_user.get("user_id"),
         tax_type_code=quote.tax_type_code,
         print_items=quote.print_items,
+        credit_days=getattr(quote, "credit_days", None),
     )
     return result
 
@@ -71,6 +72,13 @@ def print_options(current_user: dict = Depends(require_auth)):
     """A3: may a line be marked "no imprimir"? Lets the screen show the control only when it is switched on."""
     from core.visibility import print_controls_enabled
     return {"print_controls_enabled": print_controls_enabled()}
+
+
+@router.get("/payment-due-options")
+def payment_due_options(current_user: dict = Depends(require_auth)):
+    """PAYMENT_DUE_ENABLED: lets the screens show the credit-days control only when it is switched on. Fail-closed."""
+    from core import payment_due
+    return {"payment_due_enabled": payment_due.enabled()}
 
 
 @router.get("/pdf-options")

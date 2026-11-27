@@ -94,6 +94,7 @@ def _category_heading(pdf, item, current, width):
 
 from core.visibility import customer_items  # noqa: E402  (A3)
 from core import pdf_options  # noqa: E402
+from core import payment_due  # noqa: E402
 
 LINE_H = 5  # one text line in an item row (mm)
 WRAP_H, WRAP_PAD = 3.6, 1.4  # wrapped description: line height and top+bottom padding (mm)
@@ -215,7 +216,8 @@ def build_quote_invoice_pdf(
     full_copy=False,
     ncf=None,
     ncf_valid_until=None,
-    phase_doc=None
+    phase_doc=None,
+    due_date=None
 ):
     payments = payments or []
     amount_paid = amount_paid or 0
@@ -229,6 +231,11 @@ def build_quote_invoice_pdf(
     # charges and totals are the caller's and never change. The other two features follow their switches.
     show_items = print_items is not False
     project_heading = pdf_options.project_desc_enabled() and bool(project_name)
+    # PAYMENT_DUE_ENABLED (default off = every line below prints exactly as before): the payment terms wrap instead of
+    # being cut at 60 characters, an invoice prints "Vencimiento de pago" from its stored due date, and an invoice stops
+    # printing "Válida Hasta" (a quote concept; the quote PDF keeps it).
+    due_on = payment_due.enabled()
+    invoice_doc = doc_type != 'COTIZACION'
     show_units = show_items and pdf_options.medidas_enabled() and any(pdf_options.clean_unit(i.get('unit_of_measure')) for i in items)
 
     pdf = FPDF()
@@ -318,9 +325,22 @@ def build_quote_invoice_pdf(
         pdf.cell(35, 4, 'Términos de Pago:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(payment_terms)[:60], 0, 1)
+        if due_on:
+            # Left column value width: from the label's end (x 45) to 2 mm short of the right column (x 110).
+            pdf.multi_cell(right_x - left_x - 35 - 2, 4, sanitize_text(payment_terms), 0, 'L', new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.cell(0, 4, sanitize_text(payment_terms)[:60], 0, 1)
 
-    if valid_until:
+    if due_on and invoice_doc and due_date:
+        pdf.set_x(left_x)
+        pdf.set_font('Arial', 'B', 7)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(35, 4, 'Vencimiento de pago:', 0, 0)
+        pdf.set_font('Arial', '', 7)
+        pdf.set_text_color(30, 30, 30)
+        pdf.cell(0, 4, sanitize_text(fmt_day(due_date)), 0, 1)
+
+    if valid_until and not (due_on and invoice_doc):
         pdf.set_x(left_x)
         pdf.set_font('Arial', 'B', 7)
         pdf.set_text_color(80, 80, 80)
@@ -337,6 +357,8 @@ def build_quote_invoice_pdf(
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
         pdf.cell(0, 4, sanitize_text(project_name)[:60], 0, 1)
+
+    left_end_y = pdf.get_y()  # where the left column ended (only used with PAYMENT_DUE_ENABLED, see final_y)
 
     pdf.set_xy(right_x, start_y)
     pdf.set_font('Arial', 'B', 7)
@@ -393,6 +415,10 @@ def build_quote_invoice_pdf(
 
     pdf.ln(8)
     final_y = max(pdf.get_y(), start_y + 20)
+    if due_on:
+        # A wrapped payment-terms value can make the left column taller than the right one; the items start below both.
+        # No effect when the left column is no taller than today's (it never goes past start_y + 20 in the usual case).
+        final_y = max(final_y, left_end_y)
     pdf.set_y(final_y + 4)
 
     def _project_heading():

@@ -9,6 +9,7 @@ from core.errors import internal_error
 from psycopg2.extras import RealDictCursor
 import logging
 from core import status_history
+from core import payment_due
 
 logger = logging.getLogger("metpro.invoices")
 
@@ -354,6 +355,8 @@ def get_invoice_by_id(invoice_id: int) -> dict:
             totals = calculate_invoice_totals(items, charges, None if rate is None else float(rate))
             invoice["totals"] = totals
 
+        # PAYMENT_DUE_ENABLED: the stored due date is shown only while the switch is on (off = today's payload).
+        invoice["due_date"] = payment_due.visible_due_date(invoice)
         return invoice
 
     finally:
@@ -513,6 +516,13 @@ def delete_invoice(invoice_id: int, actor_user_id: Optional[str] = None) -> dict
             cursor.execute("SELECT status FROM invoices WHERE id = %s", (invoice_id,))
             invoice_status = (cursor.fetchone() or {}).get("status")
 
+        # A recorded due-date change is never silently dropped with its invoice (the audit is append-only).
+        # Only while PAYMENT_DUE_ENABLED is on (off = the same statements as before; the table need not exist).
+        if payment_due.enabled():
+            cursor.execute("SELECT 1 FROM invoice_due_date_audit WHERE invoice_id = %s LIMIT 1", (invoice_id,))
+            if cursor.fetchone():
+                raise billing_error("INVOICE_HAS_DUE_DATE_AUDIT")
+
         # A delivery record (ledger conduce) is never silently dropped with its invoice.
         # to_jsonb keeps this safe when the ledger migration has not been applied yet (no such column).
         cursor.execute("SELECT 1 FROM conduces WHERE invoice_id = %s AND to_jsonb(conduces)->>'delivery_seq' IS NOT NULL LIMIT 1", (invoice_id,))
@@ -540,6 +550,44 @@ def delete_invoice(invoice_id: int, actor_user_id: Optional[str] = None) -> dict
         if conn:
             conn.rollback()
         raise internal_error("No se pudo eliminar", e)
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_due_date(invoice_id: int, due_date, note: Optional[str], actor_user_id: Optional[str]) -> dict:
+    """PAYMENT_DUE_ENABLED, admin only (the route checks). One transaction: due_date + the audit row, or neither."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        result = payment_due.edit_due_date(conn, invoice_id, due_date, note, actor_user_id)
+        conn.commit()
+        return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in result.items()}
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise internal_error("No se pudo cambiar la fecha de vencimiento", e)
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_due_date_audit(invoice_id: int) -> list:
+    """PAYMENT_DUE_ENABLED, admin only (the route checks). Every change, oldest first."""
+    payment_due.require_enabled()
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT id FROM invoices WHERE id = %s", (invoice_id,))
+        if not cursor.fetchone():
+            raise api_error(404, "Factura no encontrada", "INVOICE_NOT_FOUND")
+        rows = payment_due.list_audit(cursor, invoice_id)
+        return [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()} for r in rows]
     finally:
         if conn:
             conn.close()
@@ -575,6 +623,7 @@ def get_invoice_with_contact(invoice_id: int) -> dict:
                 i.tax_rate,
                 i.tax_label,
                 to_jsonb(i)->>'ncf' AS ncf,
+                (to_jsonb(i)->>'due_date')::date AS due_date,
                 (to_jsonb(i)->>'fiscal_sequence_id')::int AS fiscal_sequence_id,
                 (to_jsonb(i)->>'phase_id')::int AS phase_id,
                 i.subtotal AS _subtotal,
@@ -612,6 +661,9 @@ def get_invoice_with_contact(invoice_id: int) -> dict:
         for key in ("ncf", "fiscal_sequence_id", "phase_id"):
             if invoice.get(key) is None:
                 invoice.pop(key, None)
+        invoice["due_date"] = payment_due.visible_due_date(invoice)  # None while the switch is off
+        if invoice["due_date"] is None:
+            invoice.pop("due_date")  # same keys as before when there is nothing to print
 
         cursor.execute("SELECT * FROM quote_items WHERE quote_id = %s ORDER BY id", (invoice["quote_id"],))
         invoice["items"] = [dict(r) for r in cursor.fetchall()]

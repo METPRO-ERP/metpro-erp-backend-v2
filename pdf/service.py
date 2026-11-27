@@ -16,6 +16,7 @@ from pdf.builder_conduce import create_conduce_pdf
 from pdf.utils.layout_utils import build_quote_invoice_pdf
 from pdf.utils.signer import resolve_signer_name
 from pdf.phase_document import phase_layout_override
+from core import payment_due
 from core.numbering import quote_label_for, conduce_label, conduce_label_from_invoice_number
 from core.errors import internal_error
 from company_settings.service import seal_for_pdf
@@ -328,6 +329,7 @@ def generate_invoice_pdf(invoice_id: int, current_user: dict = None, print_seal:
         )
         # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice (then the quote's lines and summary + the phase block).
         _args.update(phase_layout_override(dict(invoice)))
+        _args.update(payment_due.pdf_kwargs(dict(invoice)))  # {} unless PAYMENT_DUE_ENABLED and a due date is stored
         pdf_stream = build_quote_invoice_pdf(**_args)
 
         return StreamingResponse(

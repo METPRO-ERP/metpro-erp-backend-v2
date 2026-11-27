@@ -3,12 +3,14 @@ import json
 import base64
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Response, UploadFile
+from datetime import date
 from typing import Annotated, List, Optional
 
 from .models import Invoice, InvoiceCreate, InvoiceDetail, InvoiceStatusUpdate
 from . import service
 from auth.service import require_auth, require_role, _allowed_roles
 from core.role_policy import enforce_admin
+from core import payment_due
 from core.rate_limit import public_rate_limit
 from core.email_attachments import read_extra_attachments
 from core.public_payload import public_payload
@@ -147,6 +149,7 @@ def send_invoice(
     )
     # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice.
     _args.update(phase_layout_override(invoice))
+    _args.update(payment_due.pdf_kwargs(invoice))  # {} unless PAYMENT_DUE_ENABLED and the invoice has a due date
     pdf_stream = create_invoice_pdf(**_args)
 
     pdf_bytes = pdf_stream.read()
@@ -192,6 +195,24 @@ def update_invoice_status(
     """Manual status change. Admin only. Paid is reached by recording payments."""
     result = service.update_invoice_status(invoice_id, status_update.status, _admin.get("user_id"))
     return Invoice(**result)
+
+
+class DueDateEdit(BaseModel):
+    due_date: date
+    note: Optional[str] = None   # mandatory; checked in the service so a missing note answers with its own code
+
+
+@router.patch("/{invoice_id}/due-date")
+def update_invoice_due_date(invoice_id: int, body: DueDateEdit, _admin: dict = Depends(require_role("admin"))):
+    """PAYMENT_DUE_ENABLED. Admin only. Mandatory note; every change is appended to invoice_due_date_audit."""
+    payment_due.require_enabled()
+    return service.update_due_date(invoice_id, body.due_date, body.note, _admin.get("user_id"))
+
+
+@router.get("/{invoice_id}/due-date-audit")
+def get_invoice_due_date_audit(invoice_id: int, _admin: dict = Depends(require_role("admin"))):
+    """PAYMENT_DUE_ENABLED. Admin only. Who changed the due date, when, and why."""
+    return service.get_due_date_audit(invoice_id)
 
 
 @router.delete("/{invoice_id}")
@@ -391,6 +412,7 @@ def _render_public_invoice_pdf(invoice_id: int) -> Response:
     )
     # PHASE_INVOICE_LAYOUT_ENABLED: {} unless ON and this is a phase invoice.
     _args.update(phase_layout_override(invoice))
+    _args.update(payment_due.pdf_kwargs(invoice))  # {} unless PAYMENT_DUE_ENABLED and the invoice has a due date
     pdf_stream = create_invoice_pdf(**_args)
 
     pdf_bytes = pdf_stream.read()

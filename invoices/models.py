@@ -40,6 +40,8 @@ class InvoiceDetail(Invoice):
     Invoice shape. Both fields are null for an invoice without an NCF."""
     ncf: Optional[str] = None
     ncf_valid_until: Optional[date] = None
+    # PAYMENT_DUE_ENABLED: the stored due date; null while the switch is off or when the quote had no credit days.
+    due_date: Optional[date] = None
 
 
 class InvoiceCreate(InvoiceBase):
