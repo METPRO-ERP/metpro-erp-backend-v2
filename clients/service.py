@@ -7,6 +7,7 @@ from datetime import datetime
 from database import get_db_connection
 from core.errors import internal_error
 import logging
+from core import payment_due
 
 logger = logging.getLogger("metpro.clients")
 from psycopg2.extras import RealDictCursor
@@ -40,7 +41,8 @@ def _check_email_and_tax_id(cursor, email: Optional[str], tax_id: Optional[str],
 
 def create_client(company_name: str, contact_name: Optional[str], email: Optional[str],
                   phone: Optional[str], address: Optional[str], tax_id: Optional[str],
-                  notes: Optional[str]) -> dict:
+                  notes: Optional[str], default_credit_days: Optional[int] = None,
+                  default_payment_terms: Optional[str] = None) -> dict:
 
     conn = None
     try:
@@ -56,6 +58,11 @@ def create_client(company_name: str, contact_name: Optional[str], email: Optiona
         """, (company_name, contact_name, email, phone, address, tax_id, notes))
 
         new_id = cursor.fetchone()["id"]
+        # R4: client default term, written only while PAYMENT_DUE_ENABLED is on (fail closed).
+        if payment_due.enabled() and (default_credit_days is not None or default_payment_terms is not None):
+            cursor.execute(
+                "UPDATE clients SET default_credit_days = %s, default_payment_terms = %s WHERE id = %s",
+                (payment_due.clean_credit_days(default_credit_days), default_payment_terms, new_id))
         conn.commit()
 
         cursor.execute("SELECT * FROM clients WHERE id = %s", (new_id,))
@@ -122,7 +129,8 @@ def get_client_by_id(client_id: int) -> dict:
 
 def update_client(client_id: int, company_name: str, contact_name: Optional[str],
                   email: Optional[str], phone: Optional[str], address: Optional[str],
-                  tax_id: Optional[str], notes: Optional[str]) -> dict:
+                  tax_id: Optional[str], notes: Optional[str],
+                  default_fields: Optional[dict] = None) -> dict:
 
     conn = None
     try:
@@ -150,6 +158,19 @@ def update_client(client_id: int, company_name: str, contact_name: Optional[str]
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (company_name, contact_name, email, phone, address, tax_id, notes, client_id))
+
+        # R4: only the default fields the caller sent, only while PAYMENT_DUE_ENABLED is on.
+        # Not sent = untouched. Sent null = cleared. Existing quotes and invoices are never touched.
+        if default_fields and payment_due.enabled():
+            sets, vals = [], []
+            if "default_credit_days" in default_fields:
+                sets.append("default_credit_days = %s")
+                vals.append(payment_due.clean_credit_days(default_fields["default_credit_days"]))
+            if "default_payment_terms" in default_fields:
+                sets.append("default_payment_terms = %s")
+                vals.append(default_fields["default_payment_terms"])
+            if sets:
+                cursor.execute("UPDATE clients SET " + ", ".join(sets) + " WHERE id = %s", tuple(vals) + (client_id,))
 
         conn.commit()
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 class ClientBase(BaseModel):
@@ -16,6 +16,12 @@ class Client(ClientBase):
     class Config:
         from_attributes = True
 
+class ClientOut(Client):
+    """Response used only while PAYMENT_DUE_ENABLED is on (R4). The OFF path keeps `Client`, byte-identical."""
+    default_credit_days: Optional[int] = None
+    default_payment_terms: Optional[str] = None
+
+
 class ClientCreate(ClientBase):
     pass
 
@@ -28,7 +34,19 @@ class ClientInput(ClientBase):
 
     - company_name: trimmed, required.
     - optional text fields: trimmed; blank becomes None (B-21: no more '' in tax_id or email).
+    - default_credit_days / default_payment_terms (R4): honoured only while PAYMENT_DUE_ENABLED is on.
+      Not sent = untouched on PUT; sent null = cleared.
     """
+    default_credit_days: Optional[int] = Field(default=None, ge=0, le=365)
+    default_payment_terms: Optional[str] = None
+
+    @field_validator("default_payment_terms", mode="before")
+    @classmethod
+    def _terms_blank_to_none(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
 
     @field_validator("company_name", mode="before")
     @classmethod

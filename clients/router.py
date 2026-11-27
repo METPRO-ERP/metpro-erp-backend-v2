@@ -1,11 +1,22 @@
 from core.errors import api_error
 from fastapi import Form, APIRouter, Depends, File, UploadFile
 from typing import List
-from .models import Client, ClientInput
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from core import payment_due
+from .models import Client, ClientInput, ClientOut
 from . import service
 from auth.service import require_auth, require_role
 
 router = APIRouter(prefix='/clients', tags=['clients'])
+
+
+def _out(row: dict):
+    """R4: while PAYMENT_DUE_ENABLED is on, the client carries its default term. Off: the unchanged Client.
+    A JSONResponse is wrapped in the success envelope by core.responses, so no envelope here."""
+    if payment_due.enabled():
+        return JSONResponse(jsonable_encoder(ClientOut(**row)))
+    return Client(**row)
 
 @router.post('/', response_model=Client)
 def create_client(client: ClientInput, current_user: dict = Depends(require_auth)):
@@ -17,21 +28,25 @@ def create_client(client: ClientInput, current_user: dict = Depends(require_auth
         client.phone,
         client.address,
         client.tax_id,
-        client.notes
+        client.notes,
+        client.default_credit_days,
+        client.default_payment_terms
     )
-    return Client(**result)
+    return _out(result)
 
 @router.get('/', response_model=List[Client])
 def get_clients(current_user: dict = Depends(require_auth)):
     """Get all clients"""
     clients = service.get_all_clients()
+    if payment_due.enabled():
+        return JSONResponse(jsonable_encoder([ClientOut(**c) for c in clients]))
     return [Client(**c) for c in clients]
 
 @router.get('/{client_id}', response_model=Client)
 def get_client(client_id: int, current_user: dict = Depends(require_auth)):
     """Get a single client"""
     result = service.get_client_by_id(client_id)
-    return Client(**result)
+    return _out(result)
 
 @router.put('/{client_id}', response_model=Client)
 def update_client(client_id: int, client: ClientInput, current_user: dict = Depends(require_auth)):
@@ -44,9 +59,10 @@ def update_client(client_id: int, client: ClientInput, current_user: dict = Depe
         client.phone,
         client.address,
         client.tax_id,
-        client.notes
+        client.notes,
+        {k: getattr(client, k) for k in ("default_credit_days", "default_payment_terms") if k in client.model_fields_set}
     )
-    return Client(**result)
+    return _out(result)
 
 @router.delete('/{client_id}')
 def delete_client(client_id: int, _admin: dict = Depends(require_role("admin"))):
