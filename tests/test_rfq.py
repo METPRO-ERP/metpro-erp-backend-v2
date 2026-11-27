@@ -3,7 +3,6 @@ import importlib
 import os
 import re
 import sys
-import zlib
 
 import pytest
 
@@ -11,6 +10,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(__file__))
+import pdf_streams  # noqa: E402  (shared stream reader)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -34,14 +35,7 @@ def _d(r):
     return j["data"] if isinstance(j, dict) and "data" in j and "success" in j else j
 
 
-def _pdf_text(b: bytes) -> str:
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", b, re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except Exception:
-            pass
-    return "\n".join(out)
+_pdf_text = pdf_streams.text  # shared reader (tests/pdf_streams.py)
 
 
 def test_switch_default_off(monkeypatch):

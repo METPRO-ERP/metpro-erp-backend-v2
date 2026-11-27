@@ -6,7 +6,6 @@ import importlib
 import os
 import re
 import sys
-import zlib
 
 import pytest
 
@@ -14,6 +13,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(__file__))
+import pdf_streams  # noqa: E402  (shared stream reader)
 
 import quotes  # noqa: F401,E402  (import order)
 from fastapi.testclient import TestClient  # noqa: E402
@@ -58,14 +59,7 @@ def build(**kw):
     return layout.build_quote_invoice_pdf(**args).getvalue()
 
 
-def text(pdf_bytes: bytes) -> str:
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except Exception:
-            pass
-    return "\n".join(out)
+text = pdf_streams.text  # one reader for every test: tests/pdf_streams.py (exact framing, loud on a real zlib error)
 
 
 def normalized(b: bytes) -> bytes:

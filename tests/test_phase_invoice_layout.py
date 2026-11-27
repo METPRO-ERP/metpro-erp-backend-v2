@@ -12,6 +12,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
+import pdf_streams  # noqa: E402  (shared stream reader)
 from test_pdf_medidas_m2 import (  # noqa: E402  (shared builders, client and DB fixture)
     client, db as _base_db, needs_db, text, normalized, _rows, _no_db_pages, build,
 )
@@ -83,17 +84,7 @@ def _download(iid, path="/pdf/invoices/{}"):
 
 
 def _pages(pdf_bytes):
-    import re
-    import zlib
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.S):
-        try:
-            s = zlib.decompress(m.group(1)).decode("latin-1")
-        except Exception:
-            continue
-        if "Tj" in s or "TJ" in s:
-            out.append(s)
-    return out
+    return [s for s in pdf_streams.streams(pdf_bytes) if "Tj" in s or "TJ" in s]  # shared reader (tests/pdf_streams.py)
 
 
 # ============================================================ switch and OFF identity (no database)

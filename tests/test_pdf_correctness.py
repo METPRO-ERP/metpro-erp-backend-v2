@@ -10,6 +10,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import pdf_streams  # noqa: E402  (shared stream reader)
 from test_pdf_medidas_m2 import build, normalized, _no_db_pages  # noqa: E402,F401
 
 SHORT = "Torre Norte"
@@ -44,7 +45,6 @@ def test_twin_invoice_plain_unchanged():
 
 # ============================================================ conduce: page numbers and project-name wrap
 import re  # noqa: E402
-import zlib  # noqa: E402
 import ast  # noqa: E402
 import pathlib  # noqa: E402
 
@@ -58,14 +58,7 @@ CLIENT = {"company_name": "Grupo Ramos Constructora SA", "contact_name": "Ana Pe
           "address": "Av. Winston Churchill 1099, Santo Domingo"}
 
 
-def _streams(pdf_bytes):
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf_bytes, re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except Exception:
-            pass
-    return out
+_streams = pdf_streams.streams  # shared reader (tests/pdf_streams.py)
 
 
 def _page_count(pdf_bytes):
