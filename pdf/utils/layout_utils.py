@@ -360,13 +360,22 @@ def build_quote_invoice_pdf(
 
     left_end_y = pdf.get_y()  # where the left column ended (only used with PAYMENT_DUE_ENABLED, see final_y)
 
+    def _client_value(text):
+        """R1: a client header value wraps inside its column (x 135 to 200) instead of being cut.
+        A value that fits on one line takes the original cell() path, so short-value output is byte-identical."""
+        text = sanitize_text(text)
+        if pdf.get_string_width(text) <= 65 - 2 * pdf.c_margin:
+            pdf.cell(0, 4, text, 0, 1)
+        else:
+            pdf.multi_cell(65, 4, text, 0, 'L', new_x="LMARGIN", new_y="NEXT")
+
     pdf.set_xy(right_x, start_y)
     pdf.set_font('Arial', 'B', 7)
     pdf.set_text_color(80, 80, 80)
     pdf.cell(25, 4, 'Cliente:', 0, 0)
     pdf.set_font('Arial', '', 7)
     pdf.set_text_color(30, 30, 30)
-    pdf.cell(0, 4, sanitize_text(client.get("company_name", ""))[:40], 0, 1)
+    _client_value(client.get("company_name", ""))
 
     if client.get('contact_name'):
         pdf.set_x(right_x)
@@ -375,7 +384,7 @@ def build_quote_invoice_pdf(
         pdf.cell(25, 4, 'Contacto:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(client["contact_name"])[:40], 0, 1)
+        _client_value(client["contact_name"])
 
     if client.get('email'):
         pdf.set_x(right_x)
@@ -384,7 +393,7 @@ def build_quote_invoice_pdf(
         pdf.cell(25, 4, 'Email:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(client["email"])[:40], 0, 1)
+        _client_value(client["email"])
 
     if client.get('phone'):
         pdf.set_x(right_x)
@@ -393,7 +402,7 @@ def build_quote_invoice_pdf(
         pdf.cell(25, 4, 'Teléfono:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(client["phone"])[:30], 0, 1)
+        _client_value(client["phone"])
 
     if client.get('address'):
         pdf.set_x(right_x)
@@ -402,7 +411,7 @@ def build_quote_invoice_pdf(
         pdf.cell(25, 4, 'Dirección:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(client["address"])[:40], 0, 1)
+        _client_value(client["address"])
 
     if client.get('tax_id'):
         pdf.set_x(right_x)
@@ -411,7 +420,7 @@ def build_quote_invoice_pdf(
         pdf.cell(25, 4, 'RNC:', 0, 0)
         pdf.set_font('Arial', '', 7)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 4, sanitize_text(client["tax_id"])[:30], 0, 1)
+        _client_value(client["tax_id"])
 
     pdf.ln(8)
     final_y = max(pdf.get_y(), start_y + 20)
@@ -659,12 +668,27 @@ def build_quote_invoice_pdf(
                 pay_date = fmt_day(p.get("payment_date") or p.get("date") or "")
                 pay_method = sanitize_text(str(p.get("method") or ""))
                 pay_amount = float(p.get("amount") or 0)
-                pay_notes = sanitize_text(str(p.get("notes") or ""))[:60]
+                pay_notes = sanitize_text(str(p.get("notes") or ""))
 
-                pdf.cell(40, 5, pay_date[:20], 1, 0, "L")
-                pdf.cell(40, 5, pay_method[:20], 1, 0, "L")
-                pdf.cell(40, 5, f"${pay_amount:,.2f}", 1, 0, "R")
-                pdf.cell(70, 5, pay_notes, 1, 1, "L")
+                if pdf.get_string_width(pay_notes) <= 70 - 2 * pdf.c_margin:
+                    pdf.cell(40, 5, pay_date[:20], 1, 0, "L")
+                    pdf.cell(40, 5, pay_method[:20], 1, 0, "L")
+                    pdf.cell(40, 5, f"${pay_amount:,.2f}", 1, 0, "R")
+                    pdf.cell(70, 5, pay_notes, 1, 1, "L")
+                else:
+                    # R1: a long note wraps inside its cell; the row grows to fit and the other cells share its height.
+                    n_lines = len(pdf.multi_cell(70, 5, pay_notes, split_only=True))
+                    row_h = 5 * max(1, n_lines)
+                    if pdf.will_page_break(row_h):
+                        pdf.add_page()
+                    x0, y0 = pdf.get_x(), pdf.get_y()
+                    pdf.cell(40, row_h, pay_date[:20], 1, 0, "L")
+                    pdf.cell(40, row_h, pay_method[:20], 1, 0, "L")
+                    pdf.cell(40, row_h, f"${pay_amount:,.2f}", 1, 0, "R")
+                    pdf.rect(x0 + 120, y0, 70, row_h)
+                    pdf.set_xy(x0 + 120, y0)
+                    pdf.multi_cell(70, 5, pay_notes, 0, "L", new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_xy(x0, y0 + row_h)
 
         pdf.ln(8)
 
