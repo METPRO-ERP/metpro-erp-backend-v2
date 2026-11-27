@@ -305,6 +305,32 @@ def correct_invoice_payment(
         conn.close()
 
 
+@router.get("/{invoice_id}/payments/{payment_id}/receipt")
+def payment_receipt_pdf(invoice_id: int, payment_id: int, current_user: dict = Depends(require_auth)):
+    """R3 recibo de pago (RECEIPT_ENABLED). Off: 404. Admin and superadmin only. Prints the stored payment row and its
+    two snapshot figures; nothing is recomputed and nothing is written."""
+    from core import receipt
+    receipt.require_enabled()
+    if current_user.get("role") not in _allowed_roles("admin"):  # same rule as the void and the correction
+        raise api_error(403, "Permisos insuficientes", "INSUFFICIENT_PERMISSIONS")
+    from pdf.builder_receipt import create_receipt_pdf
+    conn = get_db_connection()
+    try:
+        data = receipt.load_receipt(conn, invoice_id, payment_id)
+    finally:
+        conn.close()
+    pdf_bytes = create_receipt_pdf(
+        data["number"], data["payment"], data["invoice"],
+        ncf=service.ncf_pdf_kwargs(data["invoice"]).get("ncf"),
+        signer_name=resolve_signer_name(None, data["payment"].get("created_by_name")),
+    ).read()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=recibo_{data['number']}.pdf"},
+    )
+
+
 @router.get("/{invoice_id}/payments")
 def list_payments(invoice_id: int, current_user: dict = Depends(require_auth)):
     """Payments for one invoice, oldest first. 404 if the invoice does not exist."""

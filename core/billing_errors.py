@@ -33,6 +33,10 @@ ERRORS = {
     "DUE_DATE_BEFORE_INVOICE": (400, "La fecha de vencimiento no puede ser anterior a la fecha de la factura"),
     "INVOICE_DUE_DATE_LOCKED": (409, "La fecha de vencimiento no se puede cambiar en una factura pagada o anulada"),
     "INVOICE_HAS_DUE_DATE_AUDIT": (409, "La factura tiene cambios de fecha de vencimiento registrados y no se puede eliminar"),
+    # Payment receipt (2026-11-27, RECEIPT_ENABLED)
+    "RECEIPT_PAYMENT_NOT_FOUND": (404, "Pago no encontrado"),
+    "RECEIPT_PAYMENT_VOIDED": (409, "El pago está anulado: no se emite recibo"),
+    "RECEIPT_NO_SNAPSHOT": (409, "Este pago se registró antes del recibo de pago y no tiene saldos guardados: no se emite recibo"),
 }
 
 

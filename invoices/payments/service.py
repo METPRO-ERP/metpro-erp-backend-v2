@@ -66,18 +66,21 @@ def create_payment(conn, invoice_id: int, data, user_id=None) -> int:
         if amount > due_before + CENT_TOLERANCE:
             raise api_error(400, "El pago excede el monto pendiente", "PAYMENT_EXCEEDS_DUE")
 
-        cursor.execute(
-            """
-            INSERT INTO invoice_payments (invoice_id, amount, method, notes, payment_date, created_by_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (invoice_id, amount, data.method, data.notes, data.payment_date, user_id),
-        )
-        payment_id = cursor.fetchone()["id"]
-
+        # R3: the receipt figures are stored in the INSERT itself (the immutability trigger refuses a later UPDATE).
+        # Same locked transaction, same live-payments sum as the balance below. Always written, switch on or off.
         total_paid = _round2(paid_before + amount)
         amount_due = _round2(total_amount - total_paid)
+        cursor.execute(
+            """
+            INSERT INTO invoice_payments
+                (invoice_id, amount, method, notes, payment_date, created_by_user_id, paid_so_far_after, pending_after)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (invoice_id, amount, data.method, data.notes, data.payment_date, user_id,
+             total_paid, max(amount_due, 0.0)),
+        )
+        payment_id = cursor.fetchone()["id"]
         if amount_due <= CENT_TOLERANCE:
             amount_due = 0.0
             new_status = "Paid"
@@ -252,20 +255,21 @@ def correct_payment(conn, invoice_id: int, payment_id: int, reason: str, data, u
             (reason, user_id, invoice_id, payment_id),
         )
         chain_id = old["correction_chain_id"] or old["id"]
+        # R3: the corrected payment stores its own figures (live payments without the voided one, plus itself).
+        total_paid = _round2(paid_without_old + amount)
+        amount_due = _round2(total_amount - total_paid)
         cursor.execute(
             """
             INSERT INTO invoice_payments
                 (invoice_id, amount, method, notes, payment_date, created_by_user_id,
-                 corrects_payment_id, correction_chain_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 corrects_payment_id, correction_chain_id, paid_so_far_after, pending_after)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (invoice_id, amount, data.method, data.notes, data.payment_date, user_id, payment_id, chain_id),
+            (invoice_id, amount, data.method, data.notes, data.payment_date, user_id, payment_id, chain_id,
+             total_paid, max(amount_due, 0.0)),
         )
         new_id = cursor.fetchone()["id"]
-
-        total_paid = _round2(paid_without_old + amount)
-        amount_due = _round2(total_amount - total_paid)
         if amount_due <= CENT_TOLERANCE:
             amount_due, new_status = 0.0, "Paid"
         elif status == "Paid":

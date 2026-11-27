@@ -81,6 +81,13 @@ def payment_due_options(current_user: dict = Depends(require_auth)):
     return {"payment_due_enabled": payment_due.enabled()}
 
 
+@router.get("/receipt-options")
+def receipt_options(current_user: dict = Depends(require_auth)):
+    """RECEIPT_ENABLED (R3): lets the invoice screen show the Recibo button only when it is switched on. Fail-closed."""
+    from core import receipt
+    return {"receipt_enabled": receipt.enabled()}
+
+
 @router.get("/pdf-options")
 def pdf_option_flags(current_user: dict = Depends(require_auth)):
     """PDF update: which of the new controls are switched on. Lets the screens show them only when enabled."""
