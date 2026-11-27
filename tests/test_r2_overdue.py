@@ -130,15 +130,15 @@ def test_route_needs_a_token(monkeypatch):
 
 # ============================================================ integration (real Postgres)
 
-def _seed(db, number, due, status="Pending", total=1000.0, paid=0.0, issued=None):
+def _seed(db, number, due, status="Pending", total=1000.0, paid=0.0, issued=None, quote_id=None):
     conn = db["connect"]()
     try:
         cur = conn.cursor()
         issued = issued or (business_today() - timedelta(days=100))
         cur.execute("INSERT INTO invoices (invoice_number, status, total_amount, amount_paid, amount_due, client_id, "
-                    "invoice_date, due_date, tax_type_code, tax_rate, tax_label) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0.18,%s) RETURNING id",
+                    "invoice_date, due_date, tax_type_code, tax_rate, tax_label, quote_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0.18,%s,%s) RETURNING id",
                     (number, status, total, paid, round(total - paid, 2), db["cid"],
-                     datetime.combine(issued, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=16), due, "itbis_18", "ITBIS (18%)"))
+                     datetime.combine(issued, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=16), due, "itbis_18", "ITBIS (18%)", quote_id))
         iid = cur.fetchone()["id"]
         conn.commit()
         return iid
@@ -234,10 +234,12 @@ def test_the_view_writes_nothing(db, monkeypatch):
     qid = _mkquote(db, credit_days=30, price=1000.0)
     iid = _invoice_of(qid)
     t = business_today()
-    _seed(db, "F-W1", t - timedelta(days=40), status="Pending")
-    _seed(db, "F-W2", None, status="Pending")
+    _seed(db, "F-W1", t - timedelta(days=40), status="Pending", quote_id=qid)
+    _seed(db, "F-W2", None, status="Pending", quote_id=qid)
     before = _snapshot(db)
-    list_before = client.get("/invoices/", headers=_hdr()).text
+    first = client.get("/invoices/", headers=_hdr())
+    assert first.status_code == 200 and "F-W1" in first.text          # the list really answers, so the equality below means something
+    list_before = first.text
     for _ in range(3):
         assert client.get("/invoices/overdue", headers=_hdr()).status_code == 200
     assert _snapshot(db) == before                                                # fiscal and invoice tables byte-identical
