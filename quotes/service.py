@@ -14,6 +14,7 @@ from core.errors import internal_error
 from quotes.dynamic_charges import dynamic_charges_total
 from core.numbering import invoice_label
 from estimator.quote_lock import ADMIN_ROLES, is_estimate, money_changes
+import psycopg2.errors
 from psycopg2.extras import RealDictCursor, execute_values
 from core import pdf_options
 from core import status_history
@@ -896,7 +897,13 @@ def delete_quote(quote_id: str, actor_user_id: Optional[str] = None) -> dict:
             raise api_error(400, "Este estimado de ingeniería conserva su historial de cálculo y cambios auditados, por eso no se puede eliminar.", "ESTIMATE_QUOTE_HAS_HISTORY")
 
         cursor.execute("DELETE FROM quote_items WHERE quote_id = %s", (quote_id,))
-        cursor.execute("DELETE FROM quotes WHERE quote_id = %s", (quote_id,))
+        try:
+            cursor.execute("DELETE FROM quotes WHERE quote_id = %s", (quote_id,))
+        except psycopg2.errors.ForeignKeyViolation as fk:
+            # Inventory movements reference the quote with RESTRICT: say so. Any other FK refusal keeps today's path.
+            if getattr(fk.diag, "table_name", None) in ("inv_movements",):
+                raise billing_error("INVENTORY_QUOTE_HAS_ISSUES")
+            raise
         status_history.record(cursor, status_history.QUOTE, quote_id, row["status"], "Deleted", actor_user_id)
         conn.commit()
         return {"message": "Cotización eliminada correctamente"}

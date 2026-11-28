@@ -1019,3 +1019,42 @@ def test_migration_touches_no_existing_table_and_rolls_back_only_while_empty():
     finally:
         conn = psycopg2.connect(admin_dsn); conn.autocommit = True
         conn.cursor().execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'); conn.close()
+
+
+# ================================================================================== step 1 tidy
+
+@needs_db
+def test_deleting_a_quote_with_issued_material_is_a_clean_registered_refusal(db):
+    t = mkitem()
+    ok(receipt(t, 10, 1000.00))
+    qid = mkquote(db)
+    ok(issue(qid, t, 2))
+    r = client.delete(f"/quotes/{qid}", headers=H())
+    refused(r, 409, "INVENTORY_QUOTE_HAS_ISSUES")
+    assert "inventario" in r.json()["detail"]
+    # nothing was lost: the quote and its items are still there, stock unchanged
+    assert sql_rows(db, "SELECT count(*) AS n FROM quotes WHERE quote_id = %s", (qid,))[0]["n"] == 1
+    assert sql_rows(db, "SELECT count(*) AS n FROM quote_items WHERE quote_id = %s", (qid,))[0]["n"] >= 1
+    assert onhand("TUBO-1") == (D("8"), D("800.00"))
+
+
+@needs_db
+def test_a_quote_without_issued_material_still_deletes(db):
+    qid = mkquote(db)
+    assert client.delete(f"/quotes/{qid}", headers=H()).status_code == 200
+    assert sql_rows(db, "SELECT count(*) AS n FROM quotes WHERE quote_id = %s", (qid,))[0]["n"] == 0
+
+
+def test_every_inventory_code_raised_in_source_is_registered():
+    from core.billing_errors import ERRORS
+    root = os.path.join(os.path.dirname(__file__), "..")
+    raised = set()
+    for folder in ("inventory", "core", "quotes"):
+        for dirpath, _, files in os.walk(os.path.join(root, folder)):
+            for f in files:
+                if f.endswith(".py"):
+                    raised |= set(re.findall(r'"(INVENTORY_[A-Z_]+)"', open(os.path.join(dirpath, f), encoding="utf-8").read()))
+    raised.discard("INVENTORY_ENABLED")                                   # the switch name, not an error code
+    assert raised and not (raised - set(ERRORS)), sorted(raised - set(ERRORS))
+    for code in ("INVENTORY_LENGTH_INVALID", "INVENTORY_ITEM_FIELDS_REQUIRED", "INVENTORY_QUOTE_HAS_ISSUES"):
+        assert code in ERRORS and ERRORS[code][1]

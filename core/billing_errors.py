@@ -68,6 +68,9 @@ ERRORS = {
     "INVENTORY_OPENING_EXISTS": (409, "La carga inicial de este almacén ya se registró y está cerrada. Corrija con ajustes"),
     "INVENTORY_OPENING_DUMMY": (400, "Un artículo de prueba no puede entrar en la carga inicial"),
     "INVENTORY_OPENING_MISMATCH": (409, "El código ya existe con otro nombre, tipo, unidad o control de lote"),
+    "INVENTORY_LENGTH_INVALID": (400, "La longitud estándar debe ser mayor que cero y tener máximo 2 decimales"),
+    "INVENTORY_ITEM_FIELDS_REQUIRED": (400, "El código y el nombre son obligatorios"),
+    "INVENTORY_QUOTE_HAS_ISSUES": (409, "Esta cotización tiene material despachado desde inventario y no se puede eliminar"),
 }
 
 
